@@ -355,8 +355,8 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%s is required", check.name)
 		}
 	}
-	if c.Runtime.Backend != "deepseek" && c.Runtime.Backend != "sglang" {
-		return errors.New("runtime.backend must be deepseek or sglang")
+	if c.Runtime.Backend != "deepseek" && c.Runtime.Backend != "sglang" && c.Runtime.Backend != "anthropic" {
+		return errors.New("runtime.backend must be deepseek, sglang, or anthropic")
 	}
 	if c.Harness.Mode == "" {
 		c.Harness.Mode = "agent"
@@ -487,9 +487,22 @@ func (c *RuntimeConfig) validate() error {
 			return errors.New("external deepseek runtime.config must be empty")
 		}
 		return nil
+	case "anthropic":
+		// Mirrors deepseek: Claude Code calls the Anthropic API itself, so
+		// ARIES owns no managed process and accepts no runtime.config here.
+		// TODO(claude-code): revisit once the harness/bridge skeletons in
+		// pkg/harness/claudecode and pkg/bridge/claudecodessh are wired for
+		// real use (see rapport_integration_claude_code.md).
+		if c.Mode != "external" {
+			return errors.New("runtime.backend anthropic requires external mode")
+		}
+		if c.Config.File != "" || c.Config.Executable != "" || c.Config.StartupTimeoutText != "" || c.Config.StopTimeoutText != "" || len(c.Config.GPUIndices) != 0 {
+			return errors.New("external anthropic runtime.config must be empty")
+		}
+		return nil
 	case "sglang":
 	default:
-		return errors.New("runtime.backend must be deepseek or sglang")
+		return errors.New("runtime.backend must be deepseek, sglang, or anthropic")
 	}
 	switch c.Mode {
 	case "external":

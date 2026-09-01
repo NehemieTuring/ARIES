@@ -1,0 +1,161 @@
+package claudecodessh
+
+import (
+	"errors"
+	"regexp"
+	"strings"
+)
+
+// DESIGN NOTE — revised after empirical capture (rapport_integration_claude_code.md,
+// step 2). The original version of this file assumed Claude Code's Bash tool
+// kept ONE persistent interactive shell process alive for the whole session
+// (so state like `cd` would survive between tool calls at the OS level). That
+// assumption was WRONG and has been empirically disproved: shimming /bin/bash
+// inside a disposable container and observing real invocations from a live
+// `claude -p` run showed Claude Code issues a fresh, discrete `bash -c
+// "<script>"` exec for every single tool call — exactly the same
+// discrete-exec-per-command model Hermes and OpenClaw already use. This
+// bridge's grammar can therefore mirror hermesssh/grammar.go's approach
+// instead of the continuous-stream design described in the superseded version
+// of this file.
+//
+// Four distinct shapes were observed for one `claude -p` run with two Bash
+// tool calls ("ls -la" then "date"):
+//
+//  1. `bash -c env`
+//     A one-time environment probe at session start.
+//
+//  2. `bash -c -l SNAPSHOT_FILE=/home/<user>/.claude/shell-snapshots/snapshot-bash-<epoch>-<rand>.sh
+//     source "<home>/.bashrc" < /dev/null
+//     ...` (a long, fixed-shape script)
+//     Exactly once per session: sources the user's .bashrc, captures every
+//     function/alias/shell-option/PATH into $SNAPSHOT_FILE, and defines
+//     Claude's own rg/find/grep/pkill shadowing functions inside that
+//     snapshot. This is Claude Code's mechanism for faking persistent shell
+//     state across the discrete execs below — the actual OS process is never
+//     kept alive; the snapshot FILE is what persists (in the sandbox's
+//     filesystem, across exec channels).
+//
+//  3. `bash -c "source $SNAPSHOT_FILE 2>/dev/null || true && shopt -u extglob 2>/dev/null || true &&
+//     { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true &&
+//     eval '<command>' < /dev/null && pwd -P >| /tmp/claude-<id>-cwd"`
+//     One per actual tool call: re-sources the snapshot (restoring functions/
+//     aliases/PATH), evaluates the real command, then records the resulting
+//     cwd to a temp file so Claude Code can detect a `cd` and carry it into
+//     the next call's context.
+//
+// Consequently, unlike the superseded design, THIS bridge:
+//   - Dispatches one SSH "exec" channel-request per command, like
+//     hermesssh/openclawssh (see bridge.go), not one continuous "shell"
+//     channel.
+//   - Extracts and journals the real inner command (the argument to `eval`)
+//     as the structured toolCallRecord payload — the snapshot/pwd-tracking
+//     scaffolding around it is bridge plumbing, not agent intent, and is kept
+//     only in the raw log for forensic completeness.
+//   - Does NOT require pty support — bash -c has never needed a controlling
+//     terminal in any of the observed shapes.
+//
+// TODO(claude-code): the exact snapshot-file path and the cwd-tracking temp
+// file name are session-random and were only exercised for a plain,
+// no-special-character command (`ls -la`, `date`). The unquoting logic below
+// (decodeEvalArgument) has not yet been exercised against a command containing
+// an embedded single quote — verify against a real run before trusting it in
+// production.
+
+const (
+	kindAgent     = "agent"
+	kindBootstrap = "bootstrap"
+	kindUnknown   = "unknown"
+)
+
+// wrapperPattern matches shape 3 above and captures the single-quoted `eval`
+// argument (group 1) verbatim, still bash-quoted.
+//
+// The leading `source $SNAPSHOT_FILE ... &&` clause is OPTIONAL: the first
+// empirical capture (§7.2, via a shimmed host-local su/run.sh setup) always
+// had it, but a later end-to-end run through the real bridge (§7.6) showed
+// real per-call commands sometimes omitting it entirely — observed as
+// `bash -c -l "shopt -u extglob ... && eval '<cmd>' ... && pwd -P >| ..."`
+// with no `source` clause at all. The exact condition under which Claude Code
+// includes vs. omits it is not yet understood (possibly whether the `-l` flag
+// itself already covers sourcing shell state, making the explicit `source`
+// redundant) — both shapes are accepted rather than guessing further.
+var wrapperPattern = regexp.MustCompile(
+	`^(?:source .*? 2>/dev/null \|\| true && )?shopt -u extglob 2>/dev/null \|\| true && \{ \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; \} >/dev/null 2>&1 \|\| true && eval (.*) < /dev/null && pwd -P >\| .*$`,
+)
+
+// snapshotBootstrapPattern matches shape 2 (the once-per-session snapshot
+// generator). It is not further decoded — only classified — since it carries
+// no agent-chosen command, just Claude Code's own fixed scaffolding script.
+var snapshotBootstrapMarker = "# Snapshot file"
+
+type remoteCommand struct {
+	// script is the real, agent-chosen command (unquoted), populated only for
+	// kindAgent.
+	script string
+	kind   string
+}
+
+// decodeRemoteCommand classifies and, for an agent command, extracts the real
+// command from one bash invocation. The real observed argv for the
+// once-per-session snapshot generator is THREE elements — `["-c", "-l",
+// "<script>"]`, not just `["-l", "<script>"]` as first assumed (see
+// rapport_integration_claude_code.md §7.6: caught by an end-to-end run
+// rejecting every real Bash tool call, all four retries hashing identical
+// because Claude Code was resending the same misclassified snapshot-generator
+// script). Classification therefore checks the bootstrap markers on the
+// resolved script FIRST, regardless of exactly which flags precede it, before
+// ever attempting the stricter per-call wrapperPattern match.
+func decodeRemoteCommand(argv []string) (remoteCommand, error) {
+	if len(argv) < 2 || argv[0] != "-c" {
+		return remoteCommand{}, errors.New("Claude Code exec command must invoke bash with -c")
+	}
+	script := argv[len(argv)-1]
+	if script == "env" {
+		return remoteCommand{kind: kindBootstrap}, nil
+	}
+	if strings.Contains(script, snapshotBootstrapMarker) || strings.Contains(script, "SNAPSHOT_FILE=") {
+		return remoteCommand{kind: kindBootstrap}, nil
+	}
+	matches := wrapperPattern.FindStringSubmatch(script)
+	if matches == nil {
+		return remoteCommand{}, errors.New("Claude Code exec script does not match the expected per-call wrapper shape")
+	}
+	inner, err := decodeEvalArgument(matches[1])
+	if err != nil {
+		return remoteCommand{}, err
+	}
+	return remoteCommand{script: inner, kind: kindAgent}, nil
+}
+
+// decodeEvalArgument un-quotes the single argument bash's own quoting rules
+// produced for `eval '<argument>'`: bash represents an embedded single quote
+// as '\” (close quote, escaped literal quote, reopen quote), the same scheme
+// POSIX shells use generally.
+//
+// TODO(claude-code): unverified against a real command containing an embedded
+// single quote — only exercised against plain commands so far (see the
+// package-level DESIGN NOTE).
+func decodeEvalArgument(quoted string) (string, error) {
+	if len(quoted) < 2 || quoted[0] != '\'' {
+		return "", errors.New("Claude Code eval argument is not single-quoted")
+	}
+	var value strings.Builder
+	position := 1
+	for position < len(quoted) {
+		if quoted[position] == '\'' {
+			if strings.HasPrefix(quoted[position:], `'\''`) {
+				value.WriteByte('\'')
+				position += 4
+				continue
+			}
+			if position == len(quoted)-1 {
+				return value.String(), nil
+			}
+			return "", errors.New("Claude Code eval argument has an unterminated quote")
+		}
+		value.WriteByte(quoted[position])
+		position++
+	}
+	return "", errors.New("Claude Code eval argument is missing its closing quote")
+}

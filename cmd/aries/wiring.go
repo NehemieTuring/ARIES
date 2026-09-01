@@ -10,10 +10,12 @@ import (
 	"github.com/hyscale-lab/aries/internal/app"
 	runtimesglang "github.com/hyscale-lab/aries/internal/modelruntime/sglang"
 	"github.com/hyscale-lab/aries/pkg/benchmark/terminalbench"
+	"github.com/hyscale-lab/aries/pkg/bridge/claudecodessh"
 	"github.com/hyscale-lab/aries/pkg/bridge/hermesssh"
 	"github.com/hyscale-lab/aries/pkg/bridge/openclawssh"
 	"github.com/hyscale-lab/aries/pkg/config"
 	"github.com/hyscale-lab/aries/pkg/core"
+	claudecodeharness "github.com/hyscale-lab/aries/pkg/harness/claudecode"
 	hermesharness "github.com/hyscale-lab/aries/pkg/harness/hermes"
 	openclawharness "github.com/hyscale-lab/aries/pkg/harness/openclaw"
 	"github.com/hyscale-lab/aries/pkg/monitor"
@@ -46,6 +48,11 @@ func validateComponents(cfg config.Config) error {
 	switch cfg.Harness.Type {
 	case "openclaw":
 	case "hermes":
+	case "claude-code":
+		// STATUS: not yet ready for real runs — see
+		// rapport_integration_claude_code.md. The harness/bridge skeletons
+		// exist but the SSH-forwarding wrapper and the wire behavior it
+		// depends on are unverified.
 	default:
 		return fmt.Errorf("unsupported harness type %q", cfg.Harness.Type)
 	}
@@ -57,12 +64,16 @@ func validateComponents(cfg config.Config) error {
 	switch cfg.Bridge.Type {
 	case "openclaw-ssh":
 	case "hermes-ssh":
+	case "claude-code-ssh":
 	default:
 		return fmt.Errorf("unsupported bridge type %q", cfg.Bridge.Type)
 	}
 	// Each bridge speaks one harness's SSH grammar, so the pair is checked
 	// here rather than left to fail at the first tool call.
 	if (cfg.Harness.Type == "hermes") != (cfg.Bridge.Type == "hermes-ssh") {
+		return fmt.Errorf("harness type %q requires its paired bridge, not %q", cfg.Harness.Type, cfg.Bridge.Type)
+	}
+	if (cfg.Harness.Type == "claude-code") != (cfg.Bridge.Type == "claude-code-ssh") {
 		return fmt.Errorf("harness type %q requires its paired bridge, not %q", cfg.Harness.Type, cfg.Bridge.Type)
 	}
 	return nil
@@ -74,6 +85,17 @@ func prepareBackend(cfg config.Config, outputDir string) (app.PreparedBackend, e
 	case "deepseek":
 		if cfg.Runtime.Mode != "external" {
 			return app.PreparedBackend{}, errors.New("DeepSeek runtime must be external")
+		}
+		return app.PreparedBackend{Model: model}, nil
+	case "anthropic":
+		// Claude Code calls the Anthropic API itself (see
+		// pkg/harness/claudecode); ARIES only validates the runtime mode here,
+		// the same way it does for DeepSeek — no Go-side inference client is
+		// involved. TODO(claude-code): add a preflight liveness check
+		// analogous to internal/app/preflight.go's DeepSeek/SGLang probes
+		// before this is considered production-ready.
+		if cfg.Runtime.Mode != "external" {
+			return app.PreparedBackend{}, errors.New("Anthropic runtime must be external")
 		}
 		return app.PreparedBackend{Model: model}, nil
 	case "sglang":
@@ -153,6 +175,16 @@ func newHarness(cfg config.Config, outputRoot string, lookup func(string) ([]byt
 			return app.HarnessInstance{}, fmt.Errorf("construct Hermes harness: %w", err)
 		}
 		return app.HarnessInstance{Harness: manager, Close: manager.Close}, nil
+	case "claude-code":
+		// TODO(claude-code): cfg.Versions needs a ClaudeCode image entry
+		// (configs/versions.json) before this can resolve a real pinned tag;
+		// left as cfg.Versions.Hermes.Image here only so this file compiles as
+		// a skeleton — replace before any real use.
+		manager, err := claudecodeharness.New(claudecodeharness.Options{Image: cfg.Versions.Hermes.Image, OutputDir: outputRoot, APIKeyLookup: lookup, Logger: logger})
+		if err != nil {
+			return app.HarnessInstance{}, fmt.Errorf("construct Claude Code harness: %w", err)
+		}
+		return app.HarnessInstance{Harness: manager, Close: manager.Close}, nil
 	default:
 		return app.HarnessInstance{}, fmt.Errorf("unsupported harness type %q", cfg.Harness.Type)
 	}
@@ -222,6 +254,12 @@ func newBridge(cfg config.Config, outputRoot string, logger *logrus.Logger) (run
 		bridge, err := hermesssh.New(hermesssh.Options{OutputDir: outputRoot, Logger: logger, OmitRawLog: !cfg.Bridge.RetainBridgeRawLog()})
 		if err != nil {
 			return nil, fmt.Errorf("construct Hermes SSH bridge: %w", err)
+		}
+		return bridge, nil
+	case "claude-code-ssh":
+		bridge, err := claudecodessh.New(claudecodessh.Options{OutputDir: outputRoot, Logger: logger, OmitRawLog: !cfg.Bridge.RetainBridgeRawLog()})
+		if err != nil {
+			return nil, fmt.Errorf("construct Claude Code SSH bridge: %w", err)
 		}
 		return bridge, nil
 	default:

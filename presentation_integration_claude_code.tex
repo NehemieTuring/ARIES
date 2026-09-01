@@ -1,0 +1,345 @@
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amssymb}
+
+\definecolor{codebg}{RGB}{245,245,245}
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  backgroundcolor=\color{codebg},
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+
+\title{Intégration de Claude Code dans ARIES}
+\subtitle{Détail du travail réalisé --- point d'étape}
+\author{Negou Donald}
+\institute{Stage --- ARIES (Agent Runtime \& Infrastructure Experimentation System)}
+\date{\today}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\begin{frame}{Plan}
+\tableofcontents
+\end{frame}
+
+% ============================================================
+\section{Rappel en une slide}
+
+\begin{frame}{Objectif (rappel, une seule slide)}
+Ajouter \textbf{Claude Code} comme troisième harness dans ARIES (aux côtés
+d'OpenClaw et Hermes), pour pouvoir le faire tourner sur des tâches
+Terminal-Bench 2 et comparer sa télémétrie (latence, CPU, mémoire) aux deux
+autres.
+
+\vspace{0.4cm}
+Tout ce qui suit est \textbf{ce qui a été fait concrètement} pour y arriver :
+code écrit, tests réels exécutés, bugs trouvés et corrigés, état actuel.
+\end{frame}
+
+% ============================================================
+\section{Code livré}
+
+\begin{frame}[fragile]{Fichiers créés}
+\begin{lstlisting}
+pkg/harness/claudecode/
+    harness.go     Start / Run / Stop (interface AgentHarness)
+    config.go      rendu settings.json, wrapper bash, exec Docker
+
+pkg/bridge/claudecodessh/
+    bridge.go      serveur SSH, dispatch des commandes
+    grammar.go     decodage/classification des commandes bash reelles
+
+cmd/aries-claudecode-probe/          outil de diagnostic (connectivite)
+cmd/aries-claudecode-harness-probe/  outil de diagnostic (harness complet)
+\end{lstlisting}
+Plus modifications de \texttt{cmd/aries/wiring.go} (paire
+\texttt{claude-code}/\texttt{claude-code-ssh}) et \texttt{pkg/config/config.go}
+(backend \texttt{anthropic}).
+
+\vspace{0.2cm}
+\textbf{Tout compile, passe \texttt{go vet}} --- mais chaque étape ci-après a
+été \textbf{testée contre de vraies infrastructures} (Docker, SSH, Claude Code
+réellement installé), pas seulement relu.
+\end{frame}
+
+% ============================================================
+\section{Étape 1 --- Prototype de connectivité}
+
+\begin{frame}[fragile]{Étape 1 : valider le mécanisme du pont, isolément}
+\textbf{Méthode} (\texttt{cmd/aries-claudecode-probe}) :
+\begin{enumerate}
+  \item Démarrage d'un vrai sandbox Docker (\texttt{ubuntu:24.04})
+  \item Démarrage du pont \texttt{claudecodessh} dessus
+  \item Connexion avec un vrai client SSH (\texttt{golang.org/x/crypto/ssh})
+  \item Envoi de plusieurs commandes séquentielles sur un même canal
+\end{enumerate}
+
+\vspace{0.3cm}
+\textbf{Résultat} :
+\begin{lstlisting}
+PROBE_MARKER_START
+hello-from-sandbox
+/root
+PROBE_MARKER_END
+=== RESULT: OK ===
+\end{lstlisting}
+Le mécanisme de proxy vers le sandbox fonctionne. Outil conservé pour la suite.
+\end{frame}
+
+% ============================================================
+\section{Étape 2 --- Capture de la grammaire réelle}
+
+\begin{frame}{Étape 2 : observer ce que Claude Code envoie vraiment}
+\textbf{Méthode} : remplacer \texttt{/bin/bash} par un script espion (journalise
+puis délègue au vrai bash) dans un conteneur jetable avec \textbf{Claude Code
+réellement installé et authentifié}. Tâche donnée : ``liste les fichiers, puis
+affiche la date''.
+
+\vspace{0.3cm}
+\textbf{Hypothèse de départ} : un shell interactif persistant pour toute la
+session.
+
+\textbf{Réalité observée} : \textbf{5 invocations séparées} de bash, jamais de
+session persistante.
+\end{frame}
+
+\begin{frame}[fragile]{Étape 2 : les 5 invocations observées}
+\begin{lstlisting}
+1) bash -c env
+   (sonde initiale)
+
+2) bash -c -l "SNAPSHOT_FILE=.../snapshot-bash-<id>.sh
+   source ~/.bashrc ...
+   (capture fonctions/alias/PATH, une seule fois par session)
+
+3) bash -c -l "shopt -u extglob ... &&
+   eval 'ls -la' < /dev/null &&
+   pwd -P >| /tmp/claude-<id>-cwd"
+   (par appel d'outil)
+
+4) meme forme pour 'date'
+\end{lstlisting}
+\textbf{Conclusion} : Claude Code simule la persistance d'état en
+\textbf{re-sourçant un fichier snapshot} à chaque appel --- exactement le
+modèle d'exécution discrète de Hermes/OpenClaw, pas une session continue.
+Le pont a été \textbf{entièrement réécrit} pour refléter cela (plus simple
+que la conception initiale).
+\end{frame}
+
+% ============================================================
+\section{Étape 3 --- Authentification}
+
+\begin{frame}[fragile]{Étape 3 : trouver le bon mécanisme d'authentification}
+Trois tentatives, testées une par une :
+
+\vspace{0.2cm}
+\textbf{1) Variable d'environnement seule} --- échec
+\begin{lstlisting}
+export ANTHROPIC_API_KEY=...
+claude -p "..." -> "Not logged in - Please run /login"
+\end{lstlisting}
+
+\textbf{2) apiKeyHelper lisant la variable d'environnement} --- échec
+\begin{lstlisting}
+"apiKeyHelper": "echo $ANTHROPIC_API_KEY"
+-> "apiKeyHelper failed: did not return a value"
+\end{lstlisting}
+(Claude Code retire la variable avant d'invoquer le helper, pour éviter une
+dépendance circulaire.)
+
+\textbf{3) apiKeyHelper lisant un fichier} --- \textbf{fonctionne}
+\begin{lstlisting}
+"apiKeyHelper": "cat /chemin/prive/vers/la/cle"
+-> authentification reussie
+\end{lstlisting}
+\end{frame}
+
+% ============================================================
+\section{Étape 4 --- Harness complet, de bout en bout}
+
+\begin{frame}{Étape 4 : construire et tester le vrai harness}
+\textbf{Image Docker construite} : \texttt{aries-claudecode:test-1}
+\begin{itemize}
+  \item Base \texttt{node:22-slim} + \texttt{openssh-client}
+  \item \texttt{npm install -g @anthropic-ai/claude-code}
+  \item Utilisateur non-root fixe, UID 10000 (\texttt{aries})
+\end{itemize}
+
+\vspace{0.3cm}
+\textbf{Test} (\texttt{cmd/aries-claudecode-harness-probe}) : vrai sandbox +
+vrai pont + vrai \texttt{Manager.Start/Run/Stop} + vraie clé API.
+
+\vspace{0.3cm}
+\textbf{Premier résultat} : \texttt{"Credit balance is too low"} --- le
+mécanisme d'authentification fonctionnait, il manquait du crédit sur le compte
+API. Une fois le compte crédité : les bugs suivants sont apparus, un par un.
+\end{frame}
+
+% ============================================================
+\section{Bugs trouvés et corrigés}
+
+\begin{frame}[fragile]{Bug 1 --- Mauvais nom de champ dans settings.json}
+\textbf{Avant} (mécanisme inventé, silencieusement ignoré par Claude Code) :
+\begin{lstlisting}
+{"env": {"ANTHROPIC_API_KEY_HELPER": "cat ..."}}
+\end{lstlisting}
+\textbf{Après} (mécanisme réel, confirmé à l'étape 3) :
+\begin{lstlisting}
+{"apiKeyHelper": "cat ..."}
+\end{lstlisting}
+Sans erreur explicite --- juste un retour silencieux à \texttt{"Not logged in"}.
+\end{frame}
+
+\begin{frame}{Bug 2 --- Permissions non-interactives et propriété des fichiers}
+\begin{itemize}
+  \item \texttt{--dangerously-skip-permissions} manquant (obligatoire en non
+        interactif) --- mais \textbf{refusé sous root} par Claude Code
+  \item Les fichiers privés stagés (clé API, identité SSH, mode 0600)
+        appartenaient à \texttt{root} par défaut --- illisibles par un
+        utilisateur non-root
+\end{itemize}
+
+\vspace{0.3cm}
+\textbf{Correction} : UID/GID fixes (\texttt{runtimeUID = 10000}), appliqués :
+\begin{itemize}
+  \item au conteneur (\texttt{container.Config.User})
+  \item à chaque fichier de l'archive stagée (\texttt{tar.Header.Uid/Gid})
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Bug 3 --- Arguments du wrapper tronqués}
+Le wrapper ne lisait que \texttt{\$1}/\texttt{\$2}, en supposant 2 arguments
+(\texttt{flag}, \texttt{script}).
+
+\vspace{0.2cm}
+Mais l'invocation réelle du générateur de snapshot en a \textbf{trois} :
+\texttt{bash -c -l "<script>"}.
+
+\vspace{0.2cm}
+\textbf{Résultat avant correction} : le 3\textsuperscript{e} argument (le vrai script)
+était silencieusement perdu --- seul \texttt{"bash -c -l"} arrivait au pont,
+rejeté à chaque fois.
+
+\vspace{0.3cm}
+\textbf{Correction} : le wrapper traite maintenant \textbf{tous} les arguments
+reçus, quel que soit leur nombre.
+\end{frame}
+
+\begin{frame}[fragile]{Bug 4 --- Reconstruction ambiguë de la commande}
+Même après le bug 3 corrigé : joindre les arguments avec de simples
+\textbf{espaces} reste ambigu à re-découper côté pont --- un script réel peut
+lui-même commencer par un mot qui ressemble à un drapeau
+(\texttt{"-l shopt -u extglob ..."} confondu avec un drapeau \texttt{-l}
+suivi d'un script commençant par \texttt{shopt}).
+
+\vspace{0.3cm}
+\textbf{Correction} : séparateur non imprimable exact
+(\texttt{\textbackslash x1f}, ASCII Unit Separator --- même convention que les
+marqueurs de fin d'exécution d'Hermes). Le wrapper joint tous les arguments
+originaux avec ce séparateur ; le pont les resépare avec
+\texttt{strings.Split}, sans aucune ambiguïté possible.
+\end{frame}
+
+\begin{frame}[fragile]{Bug 5 --- Motif de grammaire trop strict}
+Le motif de reconnaissance du pont exigeait un préfixe
+\texttt{source \$SNAPSHOT\_FILE ... \&\&} obligatoire.
+
+\vspace{0.2cm}
+Mais un vrai appel observé en bout en bout \textbf{omet parfois entièrement}
+cette ligne :
+\begin{lstlisting}
+bash -c -l "shopt -u extglob ... && eval '<commande>' ... && pwd -P >| ..."
+(sans aucun `source` au debut)
+\end{lstlisting}
+
+\vspace{0.3cm}
+\textbf{Correction} : le préfixe \texttt{source ...} est rendu
+\textbf{optionnel} dans le motif. La condition exacte qui déclenche l'une ou
+l'autre forme reste incomprise --- notée comme limite connue.
+\end{frame}
+
+% ============================================================
+\section{Résultat actuel}
+
+\begin{frame}[fragile]{Ce qui fonctionne maintenant}
+Après les 5 corrections ci-dessus, l'outil \textbf{Bash} de Claude Code
+fonctionne correctement à travers le pont ARIES, de bout en bout :
+\begin{itemize}
+  \item Démarrage / arrêt du harness --- \checkmark
+  \item Authentification (\texttt{apiKeyHelper}) --- \checkmark
+  \item Commandes Bash routées vers le sandbox --- \checkmark
+  \item Plus aucune erreur \texttt{"exec request failed"} --- \checkmark
+\end{itemize}
+
+\vspace{0.3cm}
+\texttt{status=succeeded}, cycle complet \texttt{Start}/\texttt{Run}/\texttt{Stop}
+validé sur une vraie tâche (créer un fichier, le lire).
+\end{frame}
+
+\begin{frame}{Mais : une limite architecturale découverte par Claude Code lui-même}
+Une fois Bash réparé, la réponse finale de l'agent a signalé :
+
+\begin{quote}
+\small ``\textit{the Bash tool is connected via SSH to a separate machine
+(root@172.18.0.1, home dir /root) that doesn't share a filesystem with the one
+my Write/Read tools use (/home/aries/workspace).}''
+\end{quote}
+
+\vspace{0.3cm}
+\textbf{Exact} : les outils natifs \texttt{Write}/\texttt{Read}/\texttt{Edit}
+de Claude Code manipulent le système de fichiers \textbf{directement}
+(Node.js \texttt{fs}), sans jamais invoquer \texttt{bash} --- donc jamais
+interceptés par le wrapper.
+
+\vspace{0.3cm}
+\textbf{Conséquence} : un fichier créé avec \texttt{Write} existe dans le
+harness, jamais dans le sandbox --- invisible pour un vérificateur de
+benchmark réel.
+\end{frame}
+
+\begin{frame}{État du code à date}
+\begin{itemize}
+  \item \texttt{pkg/harness/claudecode/} et \texttt{pkg/bridge/claudecodessh/} :
+        écrits, compilent, testés contre de vraies infrastructures
+  \item Outil Bash : \textbf{validé de bout en bout}
+  \item Outils Write/Read/Edit : \textbf{non résolus} --- limite documentée,
+        pas encore de correctif
+  \item Documentation complète : \texttt{rapport\_integration\_claude\_code.md}
+        (contexte, décisions de conception, tous les résultats empiriques
+        détaillés ci-dessus)
+\end{itemize}
+\end{frame}
+
+% ============================================================
+\section{Pour la suite}
+
+\begin{frame}{Questions pour discussion}
+\begin{itemize}
+  \item Résoudre Write/Read/Edit (serveur MCP personnalisé, ou montage
+        réseau) fait-il partie du périmètre attendu du stage ?
+  \item Continuer à approfondir Claude Code, ou consolider/documenter l'état
+        actuel et passer à autre chose ?
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Merci}
+\centering
+\Large Questions ?
+
+\vspace{1cm}
+\normalsize
+Documentation complète : \texttt{rapport\_integration\_claude\_code.md} \\
+Code : \texttt{pkg/harness/claudecode/}, \texttt{pkg/bridge/claudecodessh/}
+\end{frame}
+
+\end{document}
