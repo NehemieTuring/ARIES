@@ -72,6 +72,19 @@ const (
 	modelKeyPath          = stateRoot + "/api-key"
 	identityContainerFS   = stateRoot + "/ssh/id_ed25519"
 
+	// mcpFilesContainerPath is where cmd/aries-claudecode-mcpfiles is staged
+	// (see config.go's runtimeArchive) — see that package's doc comment and
+	// rapport_integration_claude_code.md §9 for why this exists.
+	mcpFilesContainerPath = stateRoot + "/bin/aries-claudecode-mcpfiles"
+
+	// mcpConfigContainerPath is the file renderMCPConfig writes and Run's
+	// `--mcp-config` flag points at. NOT settings.json: a real
+	// `claude --help`/`claude mcp --help` on the pinned CLI showed
+	// settings.json has no recognized `mcpServers` key at all — confirmed by
+	// a debug trace showing the companion server was never spawned when it
+	// was declared there (see rapport_integration_claude_code.md §9.5).
+	mcpConfigContainerPath = stateRoot + "/mcp-servers.json"
+
 	// bashWrapperPath REPLACES the image's real /bin/bash — confirmed by
 	// empirical capture (rapport_integration_claude_code.md §7.2) that Claude
 	// Code's Bash tool invokes this exact absolute path directly, never via a
@@ -114,6 +127,21 @@ type Options struct {
 	StartTimeout   time.Duration
 	AgentTimeout   time.Duration
 	Logger         *logrus.Logger
+	// MCPFilesBinaryPath is a host-local path to the compiled
+	// cmd/aries-claudecode-mcpfiles binary (linux/amd64, matching the pinned
+	// harness image), staged into every container so Claude Code's native
+	// Write/Read/Edit/Glob/Grep tools — which cannot be routed to the sandbox,
+	// see rapport_integration_claude_code.md §7.5ter — can be replaced by MCP
+	// equivalents that are (§9). Required; there is no fallback default
+	// because a missing/wrong-arch binary would fail silently at container
+	// start otherwise.
+	//
+	// TODO(claude-code): wire this from cmd/aries's own config the same way
+	// Image itself still needs proper cfg.Versions plumbing (see
+	// cmd/aries/wiring.go's existing TODO) — for now this is a plain path the
+	// caller must build (`go build -o <path> ./cmd/aries-claudecode-mcpfiles`)
+	// and supply themselves.
+	MCPFilesBinaryPath string
 }
 
 // dockerClient is the small Engine SDK surface this harness needs — the same
@@ -144,6 +172,7 @@ type Manager struct {
 	logger         *logrus.Logger
 	apiKeyLookup   func(string) ([]byte, bool)
 	newID          func() (string, error)
+	mcpFilesBinary string
 
 	mu        sync.Mutex
 	active    *session
@@ -227,11 +256,18 @@ func New(options Options) (*Manager, error) {
 	if options.APIKeyLookup == nil {
 		options.APIKeyLookup = environmentAPIKeyLookup
 	}
+	if strings.TrimSpace(options.MCPFilesBinaryPath) == "" {
+		return nil, errors.New("Claude Code MCP file-tools binary path is required (MCPFilesBinaryPath)")
+	}
+	if _, err := os.Stat(options.MCPFilesBinaryPath); err != nil {
+		return nil, fmt.Errorf("Claude Code MCP file-tools binary: %w", err)
+	}
 	return &Manager{
 		client: api, image: options.Image, outputDir: outputDir,
 		cleanupTimeout: options.CleanupTimeout, startTimeout: options.StartTimeout,
 		agentTimeout: options.AgentTimeout, maxTurns: options.MaxTurns,
 		logger: options.Logger, apiKeyLookup: options.APIKeyLookup, newID: randomID,
+		mcpFilesBinary: options.MCPFilesBinaryPath,
 	}, nil
 }
 
@@ -272,6 +308,20 @@ func (manager *Manager) Start(ctx context.Context, request core.HarnessRequest) 
 		"HOME=/home/aries",
 		"CLAUDE_CONFIG_DIR=" + stateRoot,
 	}, bridgeEnv...)
+	// ANTHROPIC_CUSTOM_HEADERS, not a plain ANTHROPIC_WORKSPACE_ID var: an
+	// earlier attempt set that instead (a real env var name found in the
+	// CLI binary's strings) and it had NO effect — the identical `400
+	// anthropic-workspace-id is required` error still surfaced. Decompiled
+	// CLI strings showed the actual code path only attaches that header
+	// automatically for OAuth ("user_oauth") sessions; for apiKeyHelper-
+	// based auth the header must be supplied via ANTHROPIC_CUSTOM_HEADERS —
+	// confirmed working end-to-end (`is_error:false`) against the real API
+	// (rapport_integration_claude_code.md §9.7). Format: newline-separated
+	// "Header-Name: value" pairs, applied to every inference/model-discovery
+	// request regardless of auth type. Not a secret — safe to set directly.
+	if strings.TrimSpace(request.Model.WorkspaceID) != "" {
+		environment = append(environment, "ANTHROPIC_CUSTOM_HEADERS=anthropic-workspace-id: "+request.Model.WorkspaceID)
+	}
 
 	apiKeySource, ok := manager.apiKeyLookup(request.Model.APIKeyEnv)
 	if !ok {
@@ -435,6 +485,14 @@ func (manager *Manager) Run(ctx context.Context, instruction string) (core.Harne
 		// always runs as runtimeUID, never root, so this is safe here (see
 		// rapport_integration_claude_code.md §7.3).
 		"--dangerously-skip-permissions",
+		// Registers the companion MCP file-tools server (config.go's
+		// renderMCPConfig) — NOT settings.json, which has no recognized
+		// mcpServers key on the pinned CLI (see mcpConfigContainerPath's doc
+		// comment and rapport_integration_claude_code.md §9.5).
+		// --strict-mcp-config additionally ignores any ambient .mcp.json/
+		// `claude mcp add` configuration the image might otherwise carry.
+		"--mcp-config", mcpConfigContainerPath,
+		"--strict-mcp-config",
 	}
 	result, runErr := manager.execAttached(runCtx, active.containerID, command, workspaceRoot)
 	cancel()

@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -156,6 +157,111 @@ func run() error {
 	} else {
 		fmt.Println("=== RESULT: FAILED — expected output not observed ===")
 	}
+
+	// Phase 5: does edit_file's old_string/new_string (base64-encoded and
+	// \x1f-joined into ONE SSH exec "command" string — see
+	// pkg/bridge/claudecodessh/fileops.go and cmd/aries-claudecode-mcpfiles's
+	// runFileOp) have a real size limit? Unlike write_file (content streamed
+	// over the channel's stdin, piped straight to `dd` — never touches any
+	// argv/exec() boundary), old_string/new_string ride inside the exec
+	// request's command string itself. There is no local OS argv/exec() call
+	// anywhere in this path either (the client dials with the native Go SSH
+	// library, golang.org/x/crypto/ssh, not a subprocess) — so classic Unix
+	// ARG_MAX literally cannot apply; the real question is whether the SSH
+	// library/protocol imposes its own limit on a single exec request's
+	// command string. Tested here directly against the bridge, bypassing
+	// Claude Code and the real API entirely — free and fast to iterate.
+	fmt.Println("=== 5. fileop size stress test: edit_file with increasingly large old_string/new_string ===")
+	if err := fileOpSizeStressTest(endpoint, signer); err != nil {
+		return fmt.Errorf("fileop size stress test: %w", err)
+	}
+	return nil
+}
+
+func fileOpCommand(op string, args ...string) string {
+	parts := make([]string, 0, len(args)+2)
+	parts = append(parts, "aries-fileop", op)
+	for _, argument := range args {
+		parts = append(parts, base64.StdEncoding.EncodeToString([]byte(argument)))
+	}
+	return strings.Join(parts, "\x1f")
+}
+
+// fileOpRun mirrors cmd/aries-claudecode-mcpfiles's runFileOp exactly (same
+// command construction, same one-session-per-call model) but as a standalone
+// Go SSH client here, so this phase doesn't need to build or invoke that
+// binary.
+func fileOpRun(endpoint core.ToolEndpoint, signer ssh.Signer, stdin *strings.Reader, op string, args ...string) (stdout, stderr string, exitCode int, err error) {
+	client, err := dialClient(endpoint, signer)
+	if err != nil {
+		return "", "", -1, fmt.Errorf("dial: %w", err)
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return "", "", -1, fmt.Errorf("new session: %w", err)
+	}
+	defer session.Close()
+	var outBuf, errBuf bytes.Buffer
+	session.Stdout, session.Stderr = &outBuf, &errBuf
+	if stdin != nil {
+		session.Stdin = stdin
+	}
+	runErr := session.Run(fileOpCommand(op, args...))
+	if runErr == nil {
+		return outBuf.String(), errBuf.String(), 0, nil
+	}
+	if exitErr, ok := runErr.(*ssh.ExitError); ok {
+		return outBuf.String(), errBuf.String(), exitErr.ExitStatus(), nil
+	}
+	return outBuf.String(), errBuf.String(), -1, runErr
+}
+
+// Threshold pinned by binary search against a real bridge
+// (rapport_integration_claude_code.md §9.10): edit_file succeeds with
+// old_string/new_string at 98,000 bytes each (196,000 combined raw, ~261.3KiB
+// once base64-encoded together in the exec command string) and fails at
+// 99,000 bytes each (198,000 combined, ~264.0KiB) — consistent with
+// golang.org/x/crypto/ssh's hard-coded `maxPacket = 256*1024` (262144 bytes,
+// see ssh/cipher.go) once the "aries-fileop"/path/separator overhead is
+// added. Not an OS ARG_MAX (this path never calls exec() with these bytes as
+// argv — the client dials with the native Go SSH library, no subprocess) but
+// an SSH single-packet ceiling, hit here because both strings ride inside
+// one exec request's command string rather than being streamed like
+// write_file's content is.
+func fileOpSizeStressTest(endpoint core.ToolEndpoint, signer ssh.Signer) error {
+	const path = "/root/stress-test.txt"
+	sizes := []int{1_000, 10_000, 50_000, 90_000, 98_000}
+	for _, size := range sizes {
+		oldBlob := strings.Repeat("A", size)
+		newBlob := strings.Repeat("B", size)
+
+		// Seed the file via write_file (stdin-streamed, already known safe —
+		// this step is just setup, not what's under test).
+		_, seedStderr, seedExit, err := fileOpRun(endpoint, signer, strings.NewReader(oldBlob), "write_file", path)
+		if err != nil {
+			return fmt.Errorf("size %d bytes: seed write_file transport error: %w", size, err)
+		}
+		if seedExit != 0 {
+			return fmt.Errorf("size %d bytes: seed write_file exited %d: %s", size, seedExit, seedStderr)
+		}
+
+		// The actual question: old_string/new_string embedded in the exec
+		// command string itself.
+		out, editErr, exitCode, err := fileOpRun(endpoint, signer, nil, "edit_file", path, oldBlob, newBlob)
+		if err != nil {
+			fmt.Printf("size %d bytes: FAILED at SSH transport level: %v\n", size, err)
+			fmt.Println("=== RESULT: limit found — see size above ===")
+			return nil
+		}
+		if exitCode != 0 {
+			fmt.Printf("size %d bytes: edit_file rejected, exit=%d, stdout=%q stderr=%q\n", size, exitCode, out, editErr)
+			fmt.Println("=== RESULT: limit found — see size above ===")
+			return nil
+		}
+		fmt.Printf("size %d bytes: OK\n", size)
+	}
+	fmt.Printf("=== RESULT: OK — edit_file handled up to %d bytes without hitting any limit ===\n", sizes[len(sizes)-1])
 	return nil
 }
 

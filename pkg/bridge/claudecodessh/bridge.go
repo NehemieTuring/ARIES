@@ -321,7 +321,28 @@ func (session *bridgeSession) handleSession(ctx context.Context, channel ssh.Cha
 			session.logRequestFailure(payload.Command, kindUnknown, "rejected", err.Error())
 			return
 		}
-		if len(argv) == 0 || argv[0] != "bash" {
+		if len(argv) == 0 {
+			_ = session.reply(request, false)
+			session.logRequestFailure(payload.Command, kindUnknown, "rejected", "Claude Code exec command is empty")
+			return
+		}
+		// "aries-fileop" is the companion MCP file-tools server's own wire
+		// format (fileops.go), not Claude Code's bash-tool grammar — see
+		// fileops.go's package doc comment for why it needs a separate path.
+		if argv[0] == "aries-fileop" {
+			op, err := decodeFileOp(argv[1:])
+			if err != nil {
+				_ = session.reply(request, false)
+				session.logRequestFailure(payload.Command, kindFileOp, "rejected", err.Error())
+				return
+			}
+			if err := session.reply(request, true); err != nil {
+				return
+			}
+			session.executeFileOp(ctx, channel, op)
+			return
+		}
+		if argv[0] != "bash" {
 			_ = session.reply(request, false)
 			session.logRequestFailure(payload.Command, kindUnknown, "rejected", "Claude Code exec must invoke bash")
 			return

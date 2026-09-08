@@ -66,6 +66,11 @@ const (
 	kindAgent     = "agent"
 	kindBootstrap = "bootstrap"
 	kindUnknown   = "unknown"
+	// kindFileOp identifies a command from the companion MCP file-tools server
+	// (cmd/aries-claudecode-mcpfiles), decoded by fileops.go rather than by
+	// this file's wrapperPattern — see fileops.go's package doc comment for
+	// why that command family needs a separate grammar.
+	kindFileOp = "fileop"
 )
 
 // wrapperPattern matches shape 3 above and captures the single-quoted `eval`
@@ -128,34 +133,67 @@ func decodeRemoteCommand(argv []string) (remoteCommand, error) {
 	return remoteCommand{script: inner, kind: kindAgent}, nil
 }
 
-// decodeEvalArgument un-quotes the single argument bash's own quoting rules
-// produced for `eval '<argument>'`: bash represents an embedded single quote
-// as '\” (close quote, escaped literal quote, reopen quote), the same scheme
-// POSIX shells use generally.
+// decodeEvalArgument un-quotes the single shell word bash produced for `eval
+// <word> < /dev/null`.
 //
-// TODO(claude-code): unverified against a real command containing an embedded
-// single quote — only exercised against plain commands so far (see the
-// package-level DESIGN NOTE).
-func decodeEvalArgument(quoted string) (string, error) {
-	if len(quoted) < 2 || quoted[0] != '\'' {
-		return "", errors.New("Claude Code eval argument is not single-quoted")
-	}
+// BUG FOUND AND FIXED (rapport_integration_claude_code.md §9.8): the
+// original version handled only ONE way of embedding a literal single quote
+// inside a single-quoted string (close, backslash-escaped quote, reopen:
+// `'\”`) and required the whole word to start with `'`. A real end-to-end
+// run with a command containing an embedded single quote
+// (`printf 'Hello ARIES' > greeting.txt && ...`) showed Claude Code's own
+// shell-quoting instead produces `'"'"'` (close single quote, open double
+// quote containing a literal `'`, close double quote, reopen single quote)
+// — a different, equally-valid POSIX idiom for the same thing — and a
+// SEPARATE real call passed a bare, entirely unquoted word (`eval pwd`),
+// which the old code also rejected outright. Both were observed being
+// rejected in a real tool-calls.jsonl/ssh_raw.log before this fix.
+//
+// Rather than pattern-match specific idioms, this is a general POSIX
+// "shell word" unquoter: single-quoted spans are copied verbatim (no
+// escapes, per POSIX); double-quoted spans honor backslash only before
+// \, $, `, "; outside any quote, backslash escapes exactly the next
+// character; anything else outside a quote is copied as-is. Adjacent
+// spans (quoted or not) concatenate with no separator, exactly as bash
+// itself would join them — which is how both idioms above, and a fully
+// unquoted word, all fall out of the same small state machine.
+func decodeEvalArgument(word string) (string, error) {
 	var value strings.Builder
-	position := 1
-	for position < len(quoted) {
-		if quoted[position] == '\'' {
-			if strings.HasPrefix(quoted[position:], `'\''`) {
-				value.WriteByte('\'')
-				position += 4
-				continue
+	position := 0
+	for position < len(word) {
+		switch word[position] {
+		case '\'':
+			end := strings.IndexByte(word[position+1:], '\'')
+			if end == -1 {
+				return "", errors.New("Claude Code eval argument has an unterminated single quote")
 			}
-			if position == len(quoted)-1 {
-				return value.String(), nil
+			value.WriteString(word[position+1 : position+1+end])
+			position += end + 2
+		case '"':
+			position++
+			for position < len(word) && word[position] != '"' {
+				if word[position] == '\\' && position+1 < len(word) && strings.IndexByte(`\$`+"`\"", word[position+1]) != -1 {
+					value.WriteByte(word[position+1])
+					position += 2
+					continue
+				}
+				value.WriteByte(word[position])
+				position++
 			}
-			return "", errors.New("Claude Code eval argument has an unterminated quote")
+			if position >= len(word) {
+				return "", errors.New("Claude Code eval argument has an unterminated double quote")
+			}
+			position++
+		case '\\':
+			if position+1 >= len(word) {
+				return "", errors.New("Claude Code eval argument ends with a trailing backslash")
+			}
+			value.WriteByte(word[position+1])
+			position += 2
+		default:
+			value.WriteByte(word[position])
+			position++
 		}
-		value.WriteByte(quoted[position])
-		position++
 	}
-	return "", errors.New("Claude Code eval argument is missing its closing quote")
+	return value.String(), nil
 }

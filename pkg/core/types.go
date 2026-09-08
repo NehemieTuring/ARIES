@@ -82,6 +82,13 @@ type ModelConfig struct {
 	BaseURL   string `json:"base_url"`
 	Model     string `json:"model"`
 	APIKeyEnv string `json:"api_key_env"`
+	// WorkspaceID is required only for "identity-linked" Anthropic API keys
+	// (created via `claude auth login --workspace-id ...` rather than a
+	// plain organization key): the Messages API rejects such a key with
+	// `400 anthropic-workspace-id is required` unless every request carries
+	// that header. Not a secret — safe to log/display, unlike APIKeyEnv's
+	// referenced value. See rapport_integration_claude_code.md §9.7.
+	WorkspaceID string `json:"workspace_id,omitempty"`
 }
 
 // ToolEndpoint is the bridge endpoint and task-local file contract given to a

@@ -1,0 +1,716 @@
+<title>Harness Telemetry Comparison</title>
+<meta name="description" content="OpenClaw, Hermes et Claude Code sur deux tâches Terminal-Bench 2 dans ARIES : durée, pic CPU et mémoire moyenne du harness, run par run.">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --accent: #4a3aa7;
+    --good: #006300;
+    --warn-bg: #fbf0e0;
+    --warn-ink: #7a4a00;
+    --warn-border: #e8c894;
+
+    --hue-openclaw: #2a78d6;
+    --hue-hermes: #eb6834;
+    --hue-claude: #1baf7a;
+
+    --font-display: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --accent: #9085e9;
+      --good: #0ca30c;
+      --warn-bg: #2a2010;
+      --warn-ink: #e8c894;
+      --warn-border: #4a3a1a;
+      --hue-openclaw: #3987e5;
+      --hue-hermes: #d95926;
+      --hue-claude: #199e70;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --accent: #9085e9;
+    --good: #0ca30c;
+    --warn-bg: #2a2010;
+    --warn-ink: #e8c894;
+    --warn-border: #4a3a1a;
+    --hue-openclaw: #3987e5;
+    --hue-hermes: #d95926;
+    --hue-claude: #199e70;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-display);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 56px 24px 80px;
+  }
+
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: 34px;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    font-weight: 700;
+    margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .dek {
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0 0 6px;
+  }
+  .meta {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--muted);
+    margin: 18px 0 0;
+  }
+
+  .caveat {
+    margin-top: 22px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    color: var(--warn-ink);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  .caveat b { font-weight: 600; }
+
+  .headline {
+    margin-top: 24px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 22px 24px;
+    display: flex;
+    gap: 28px;
+    flex-wrap: wrap;
+  }
+  .headline-item { flex: 1 1 200px; }
+  .headline-label {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin: 0 0 6px;
+  }
+  .headline-value {
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+  .headline-value .unit {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-2);
+    margin-left: 3px;
+  }
+  .headline-sub {
+    font-size: 13px;
+    color: var(--ink-2);
+    margin-top: 4px;
+  }
+
+  section.charts { margin-top: 44px; }
+  h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    letter-spacing: -0.005em;
+  }
+  .section-sub {
+    font-size: 14px;
+    color: var(--ink-2);
+    margin: 0 0 22px;
+  }
+
+  .task-switch {
+    display: flex;
+    gap: 4px;
+    margin: 0 0 22px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    width: fit-content;
+  }
+  .task-switch button {
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-2);
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  .task-switch button.active {
+    background: var(--page);
+    color: var(--ink);
+    font-weight: 600;
+    box-shadow: 0 1px 2px var(--border);
+  }
+  .task-switch button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .task-switch code { font-family: var(--font-mono); }
+
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin: 0 0 20px;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .legend-item { display: flex; align-items: center; }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    margin-right: 7px;
+    flex: none;
+  }
+  .legend-mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: 8px;
+    padding-left: 14px;
+    border-left: 1px solid var(--border);
+  }
+  .status-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    border: 1.6px solid var(--ink-2);
+    display: inline-block;
+  }
+  .status-dot.ok { background: var(--ink-2); }
+  .status-dot.fail { background: var(--surface); }
+
+  .panels {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 760px) {
+    .panels { grid-template-columns: 1fr; }
+  }
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 18px 16px 14px;
+  }
+  .panel-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    margin: 0 0 2px;
+  }
+  .panel-unit {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  .panel svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .tick-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    fill: var(--muted);
+  }
+  .cat-label {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    font-weight: 500;
+    fill: var(--ink-2);
+  }
+  .mean-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    fill: var(--ink);
+  }
+  .grid-line { stroke: var(--grid); stroke-width: 1; }
+  .baseline { stroke: var(--baseline); stroke-width: 1; }
+  .mean-tick { stroke-width: 2; stroke-linecap: round; }
+  .dot { cursor: pointer; }
+  .dot-ring { fill: var(--surface); }
+
+  table.rundata {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+  }
+  table.rundata th, table.rundata td {
+    text-align: right;
+    padding: 8px 10px;
+    font-variant-numeric: tabular-nums;
+    border-bottom: 1px solid var(--grid);
+    white-space: nowrap;
+  }
+  table.rundata th:first-child, table.rundata td:first-child,
+  table.rundata th:nth-child(2), table.rundata td:nth-child(2),
+  table.rundata th:nth-child(3), table.rundata td:nth-child(3) {
+    text-align: left;
+  }
+  table.rundata thead th {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 11.5px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid var(--baseline);
+  }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .table-wrap table { min-width: 700px; }
+  .row-harness { display: flex; align-items: center; gap: 8px; }
+  .reward-ok { color: var(--good); font-weight: 600; }
+  .reward-fail { color: var(--ink-2); }
+  .model-tag { color: var(--muted); }
+
+  details.methodology {
+    margin-top: 40px;
+    border-top: 1px solid var(--border);
+    padding-top: 18px;
+  }
+  details.methodology summary {
+    cursor: pointer;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+    list-style: none;
+  }
+  details.methodology summary::-webkit-details-marker { display: none; }
+  details.methodology summary::before {
+    content: "→ ";
+    color: var(--accent);
+  }
+  details.methodology[open] summary::before { content: "↓ "; }
+  details.methodology p, details.methodology li {
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--ink-2);
+  }
+  details.methodology { font-size: 13.5px; }
+  details.methodology ul { margin: 8px 0; padding-left: 20px; }
+
+  #tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: var(--ink);
+    color: var(--page);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    border-radius: 6px;
+    opacity: 0;
+    transition: opacity 0.08s ease;
+    z-index: 10;
+    max-width: 230px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  }
+  #tooltip.show { opacity: 1; }
+  #tooltip b { color: var(--page); }
+</style>
+
+<div class="page">
+  <p class="kicker">ARIES — comparaison inter-harness</p>
+  <h1>Trois harnesses, deux tâches</h1>
+  <p class="dek">OpenClaw, Hermes et Claude Code lancés sur les mêmes tâches Terminal-Bench 2 dans ARIES —
+  même sandbox, la même télémétrie CPU/mémoire échantillonnée chaque seconde.</p>
+  <p class="meta" id="meta">30 runs réels · n=5 par harness et par tâche · 17 août – 5 sept. 2026 · pont SSH révoqué avant chaque évaluation</p>
+
+  <div class="caveat">
+    <span>⚠️</span>
+    <span><b>Modèles différents, pas seulement les harnesses</b> : OpenClaw et Hermes tournent sur
+    DeepSeek (même modèle — leurs écarts sont donc imputables au harness), Claude Code sur Claude Sonnet 5.
+    Tout écart impliquant Claude Code mélange encore l'effet du harness et celui du modèle. Un protocole à
+    modèle constant (même modèle pour les trois, via <code>ANTHROPIC_BASE_URL</code>) reste nécessaire pour
+    isoler complètement l'effet du harness.</span>
+  </div>
+
+  <div class="task-switch" id="taskSwitch"></div>
+
+  <div class="headline" id="headline"></div>
+
+  <section class="charts">
+    <h2 id="chartsTitle">Empreinte du harness, run par run</h2>
+    <p class="section-sub">Chaque point est une exécution réelle. Le trait marque la moyenne par harness.</p>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="panels" id="panels"></div>
+  </section>
+
+  <section style="margin-top:40px">
+    <h2>Détail des runs</h2>
+    <p class="section-sub">Les mêmes chiffres, en table.</p>
+    <div class="table-wrap">
+      <table class="rundata" id="rundata"></table>
+    </div>
+  </section>
+
+  <details class="methodology">
+    <summary>Méthodologie et limites</summary>
+    <ul>
+      <li><b>Modèles différents</b> : OpenClaw/Hermes sur DeepSeek, Claude Code sur Claude Sonnet 5 — voir
+        l'avertissement en haut de page. Les comparaisons impliquant Claude Code n'isolent pas l'effet du
+        harness seul ; la comparaison OpenClaw/Hermes, elle, est à modèle constant.</li>
+      <li>Métriques du composant <code>harness</code> uniquement (le conteneur agent, pas le sandbox de la
+        tâche) — c'est l'empreinte propre à chaque harness, indépendante de la tâche elle-même.</li>
+      <li>« Pic CPU » = valeur maximale de <code>cpu_percent</code> sur la durée du run (peut dépasser
+        100% : plusieurs cœurs). « Mémoire moyenne » = moyenne de <code>memory_usage_bytes</code> sur tous
+        les échantillons.</li>
+      <li><b>n=5 par harness et par tâche</b> (30 runs au total) : après une première observation à n=1-5,
+        chaque harness a été relancé jusqu'à atteindre 5 tentatives réelles sur chacune des deux tâches,
+        aucun résultat écarté ni relancé pour améliorer un chiffre. Le survol d'un point donne la date/le
+        numéro exact du run ; le trait marque la moyenne par harness.</li>
+      <li><b>OpenClaw ne réussit <code>overfull-hbox-001</code> que 2 fois sur 5</b> (contre 5/5 pour
+        Hermes, même modèle, et 4/5 pour Claude Code) — un écart de fiabilité mesuré sans confusion de
+        modèle, pas encore diagnostiqué. Sur <code>fix-git-001</code> : 4/5 pour OpenClaw et Claude Code,
+        5/5 pour Hermes ; les échecs observés sont soit un résultat incorrect, soit — pour Claude Code —
+        une question de clarification plutôt qu'une tentative face à un conflit de fusion réellement
+        ambigu.</li>
+      <li>Échantillon encore modeste (n=5) : à cette taille, seuls les écarts nettement supérieurs à
+        l'écart-type entre runs d'un même harness sont interprétables — un écart plus fin resterait
+        indiscernable du bruit.</li>
+    </ul>
+  </details>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+(function () {
+  var MODEL = {"OpenClaw":"DeepSeek", "Hermes":"DeepSeek", "Claude Code":"Sonnet 5"};
+  var TASKS = {
+    "fix-git-001": {
+      title: "fix-git-001",
+      blurb: "récupérer un commit perdu et fusionner un vrai conflit Git",
+      data: [
+        {harness:"OpenClaw", label:"2026-08-17 #1", duration_s:92.7, peak_cpu_pct:265.5, mean_mem_mb:643.8, reward:0},
+        {harness:"OpenClaw", label:"2026-08-19 #2", duration_s:95.8, peak_cpu_pct:256.7, mean_mem_mb:722.3, reward:1},
+        {harness:"OpenClaw", label:"2026-09-05 #3", duration_s:131.9, peak_cpu_pct:256.3, mean_mem_mb:629.6, reward:1},
+        {harness:"OpenClaw", label:"2026-09-05 #4", duration_s:120.3, peak_cpu_pct:264.2, mean_mem_mb:568.0, reward:1},
+        {harness:"OpenClaw", label:"2026-09-05 #5", duration_s:168.5, peak_cpu_pct:253.4, mean_mem_mb:795.7, reward:1},
+        {harness:"Hermes", label:"2026-08-23 #1", duration_s:96.2, peak_cpu_pct:92.2, mean_mem_mb:265.6, reward:1},
+        {harness:"Hermes", label:"2026-09-05 #2", duration_s:187.2, peak_cpu_pct:96.4, mean_mem_mb:285.9, reward:1},
+        {harness:"Hermes", label:"2026-09-05 #3", duration_s:194.4, peak_cpu_pct:100.1, mean_mem_mb:204.2, reward:1},
+        {harness:"Hermes", label:"2026-09-05 #4", duration_s:131.7, peak_cpu_pct:100.0, mean_mem_mb:193.8, reward:1},
+        {harness:"Hermes", label:"2026-09-05 #5", duration_s:152.5, peak_cpu_pct:100.0, mean_mem_mb:200.6, reward:1},
+        {harness:"Claude Code", label:"2026-09-03 #1", duration_s:148.5, peak_cpu_pct:126.7, mean_mem_mb:150.8, reward:0},
+        {harness:"Claude Code", label:"2026-09-03 #2", duration_s:102.6, peak_cpu_pct:62.7, mean_mem_mb:300.5, reward:1},
+        {harness:"Claude Code", label:"2026-09-03 #3", duration_s:114.2, peak_cpu_pct:17.7, mean_mem_mb:168.6, reward:1},
+        {harness:"Claude Code", label:"2026-09-03 #4", duration_s:107.4, peak_cpu_pct:58.2, mean_mem_mb:162.5, reward:1},
+        {harness:"Claude Code", label:"2026-09-03 #5", duration_s:92.2, peak_cpu_pct:16.5, mean_mem_mb:166.2, reward:1}
+      ]
+    },
+    "overfull-hbox-001": {
+      title: "overfull-hbox-001",
+      blurb: "corriger des dépassements de marge LaTeX par substitution de synonymes",
+      data: [
+        {harness:"OpenClaw", label:"2026-09-04 #1", duration_s:769.2, peak_cpu_pct:212.3, mean_mem_mb:705.7, reward:1},
+        {harness:"OpenClaw", label:"2026-09-05 #2", duration_s:897.4, peak_cpu_pct:277.6, mean_mem_mb:778.6, reward:0},
+        {harness:"OpenClaw", label:"2026-09-05 #3", duration_s:930.8, peak_cpu_pct:258.5, mean_mem_mb:555.3, reward:0},
+        {harness:"OpenClaw", label:"2026-09-05 #4", duration_s:978.1, peak_cpu_pct:285.9, mean_mem_mb:593.5, reward:0},
+        {harness:"OpenClaw", label:"2026-09-05 #5", duration_s:899.8, peak_cpu_pct:262.0, mean_mem_mb:475.7, reward:1},
+        {harness:"Hermes", label:"2026-09-04 #1", duration_s:735.1, peak_cpu_pct:89.2, mean_mem_mb:327.7, reward:1},
+        {harness:"Hermes", label:"2026-09-05 #2", duration_s:860.6, peak_cpu_pct:97.6, mean_mem_mb:308.1, reward:1},
+        {harness:"Hermes", label:"2026-09-05 #3", duration_s:744.0, peak_cpu_pct:100.1, mean_mem_mb:227.8, reward:1},
+        {harness:"Hermes", label:"2026-09-05 #4", duration_s:869.8, peak_cpu_pct:100.0, mean_mem_mb:232.7, reward:1},
+        {harness:"Hermes", label:"2026-09-05 #5", duration_s:749.7, peak_cpu_pct:100.1, mean_mem_mb:229.2, reward:1},
+        {harness:"Claude Code", label:"2026-09-03 #1", duration_s:351.2, peak_cpu_pct:100.3, mean_mem_mb:309.4, reward:1},
+        {harness:"Claude Code", label:"2026-09-05 #2", duration_s:481.2, peak_cpu_pct:118.1, mean_mem_mb:312.6, reward:0},
+        {harness:"Claude Code", label:"2026-09-05 #3", duration_s:544.9, peak_cpu_pct:115.4, mean_mem_mb:199.2, reward:1},
+        {harness:"Claude Code", label:"2026-09-05 #4", duration_s:358.6, peak_cpu_pct:114.9, mean_mem_mb:175.6, reward:1},
+        {harness:"Claude Code", label:"2026-09-05 #5", duration_s:542.7, peak_cpu_pct:119.1, mean_mem_mb:191.1, reward:1}
+      ]
+    }
+  };
+  var activeTask = "fix-git-001";
+  function DATA() { return TASKS[activeTask].data; }
+
+  var HARNESSES = ["OpenClaw", "Hermes", "Claude Code"];
+  var HUE = {"OpenClaw":"--hue-openclaw", "Hermes":"--hue-hermes", "Claude Code":"--hue-claude"};
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  function fmt(n, d) {
+    d = d === undefined ? 1 : d;
+    return n.toLocaleString("fr-FR", {minimumFractionDigits: d, maximumFractionDigits: d});
+  }
+  function byHarness(h) { return DATA().filter(function (d) { return d.harness === h; }); }
+  function mean(arr) { return arr.reduce(function (a, b) { return a + b; }, 0) / arr.length; }
+
+  // ---- task switch ----
+  function renderTaskSwitch() {
+    var el = document.getElementById("taskSwitch");
+    el.innerHTML = Object.keys(TASKS).map(function (id) {
+      var active = id === activeTask ? " active" : "";
+      return '<button type="button" class="' + active.trim() + '" data-task="' + id + '">' +
+        '<code>' + TASKS[id].title + '</code></button>';
+    }).join("");
+    el.querySelectorAll("button").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        activeTask = btn.getAttribute("data-task");
+        renderAll();
+      });
+    });
+  }
+
+  // ---- headline ----
+  function renderHeadline() {
+    var el = document.getElementById("headline");
+    var cc = byHarness("Claude Code");
+    var oc = byHarness("OpenClaw");
+    var he = byHarness("Hermes");
+    var ccPass = cc.filter(function (d) { return d.reward === 1; }).length;
+    var ccMem = mean(cc.map(function (d) { return d.mean_mem_mb; }));
+    var ocMem = mean(oc.map(function (d) { return d.mean_mem_mb; }));
+    var heMem = mean(he.map(function (d) { return d.mean_mem_mb; }));
+    var ccDur = mean(cc.map(function (d) { return d.duration_s; }));
+    var ocDur = mean(oc.map(function (d) { return d.duration_s; }));
+    var heDur = mean(he.map(function (d) { return d.duration_s; }));
+    var fastestOther = ocDur <= heDur
+      ? "vs " + fmt(ocDur,0) + " s (OpenClaw" + (oc.length>1?", n="+oc.length:"") + ")"
+      : "vs " + fmt(heDur,0) + " s (Hermes)";
+
+    var items = [
+      {
+        label: "Claude Code — réussite",
+        value: ccPass + " / " + cc.length,
+        unit: "runs",
+        sub: "sur " + cc.length + " tentative" + (cc.length>1?"s":"") + " réelle" + (cc.length>1?"s":"") + " de " + TASKS[activeTask].title
+      },
+      {
+        label: "Mémoire moyenne du harness",
+        value: fmt(ccMem, 0),
+        unit: "Mo",
+        sub: "vs " + fmt(ocMem,0) + " Mo (OpenClaw) · " + fmt(heMem,0) + " Mo (Hermes)"
+      },
+      {
+        label: "Durée moyenne de la tâche",
+        value: fmt(ccDur, 0),
+        unit: "s",
+        sub: fastestOther
+      }
+    ];
+    el.innerHTML = items.map(function (it) {
+      return '<div class="headline-item">' +
+        '<p class="headline-label">' + it.label + '</p>' +
+        '<div class="headline-value">' + it.value + '<span class="unit">' + it.unit + '</span></div>' +
+        '<p class="headline-sub">' + it.sub + '</p>' +
+        '</div>';
+    }).join("");
+  }
+
+  // ---- legend ----
+  function renderLegend() {
+    var el = document.getElementById("legend");
+    var parts = HARNESSES.map(function (h) {
+      var n = byHarness(h).length;
+      return '<span class="legend-item"><span class="legend-dot" style="background:' + cssVar(HUE[h]) + '"></span>' +
+        h + ' <span style="color:var(--muted);margin-left:4px">(' + MODEL[h] + ', n=' + n + ')</span></span>';
+    });
+    parts.push(
+      '<span class="legend-mark">' +
+      '<span class="status-dot ok"></span><span>évaluation réussie</span>' +
+      '<span class="status-dot fail"></span><span>échouée</span>' +
+      '</span>'
+    );
+    el.innerHTML = parts.join("");
+  }
+
+  // ---- table ----
+  function renderTable() {
+    var el = document.getElementById("rundata");
+    var rows = DATA().map(function (d) {
+      var dotColor = cssVar(HUE[d.harness]);
+      var rewardCell = d.reward === 1
+        ? '<span class="reward-ok">réussi</span>'
+        : '<span class="reward-fail">échoué</span>';
+      return '<tr>' +
+        '<td><span class="row-harness"><span class="legend-dot" style="background:' + dotColor + '"></span>' + d.harness + '</span></td>' +
+        '<td class="model-tag">' + MODEL[d.harness] + '</td>' +
+        '<td>' + d.label + '</td>' +
+        '<td>' + fmt(d.duration_s) + ' s</td>' +
+        '<td>' + fmt(d.peak_cpu_pct) + ' %</td>' +
+        '<td>' + fmt(d.mean_mem_mb, 0) + ' Mo</td>' +
+        '<td>' + rewardCell + '</td>' +
+        '</tr>';
+    }).join("");
+    el.innerHTML =
+      '<thead><tr><th>Harness</th><th>Modèle</th><th>Run</th><th>Durée</th><th>Pic CPU</th><th>Mémoire moy.</th><th>Évaluation</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody>';
+  }
+
+  // ---- charts ----
+  var tooltip = document.getElementById("tooltip");
+  function showTip(evt, html) {
+    tooltip.innerHTML = html;
+    tooltip.classList.add("show");
+    moveTip(evt);
+  }
+  function moveTip(evt) {
+    var x = evt.clientX + 14, y = evt.clientY + 14;
+    var w = 230, h = 100;
+    if (x + w > window.innerWidth) x = evt.clientX - w - 14;
+    if (y + h > window.innerHeight) y = evt.clientY - h - 14;
+    tooltip.style.left = x + "px";
+    tooltip.style.top = y + "px";
+  }
+  function hideTip() { tooltip.classList.remove("show"); }
+
+  function niceMax(v) {
+    var mag = Math.pow(10, Math.floor(Math.log10(v)));
+    var n = v / mag;
+    var step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    return step * mag;
+  }
+
+  function renderPanel(container, opts) {
+    var W = 280, H = 220;
+    var padTop = 14, padBottom = 34, padLeft = 6, padRight = 6;
+    var plotH = H - padTop - padBottom;
+    var maxVal = niceMax(Math.max.apply(null, DATA().map(opts.get)) * 1.12);
+    var ticks = [0, maxVal / 2, maxVal];
+
+    function yFor(v) { return padTop + plotH * (1 - v / maxVal); }
+    var laneX = [W * 0.18, W * 0.5, W * 0.82];
+
+    var svgParts = [];
+    svgParts.push('<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + opts.title + '">');
+
+    ticks.forEach(function (t) {
+      var y = yFor(t);
+      svgParts.push('<line class="grid-line" x1="' + padLeft + '" x2="' + (W - padRight) + '" y1="' + y + '" y2="' + y + '"/>');
+      svgParts.push('<text class="tick-label" x="' + padLeft + '" y="' + (y - 4) + '">' + opts.fmt(t) + '</text>');
+    });
+    var y0 = yFor(0);
+    svgParts.push('<line class="baseline" x1="' + padLeft + '" x2="' + (W - padRight) + '" y1="' + y0 + '" y2="' + y0 + '"/>');
+
+    HARNESSES.forEach(function (h, hi) {
+      var pts = byHarness(h);
+      var cx = laneX[hi];
+      var color = cssVar(HUE[h]);
+      var vals = pts.map(opts.get);
+      var m = mean(vals);
+
+      var ym = yFor(m);
+      svgParts.push('<line class="mean-tick" x1="' + (cx - 16) + '" x2="' + (cx + 16) + '" y1="' + ym + '" y2="' + ym + '" style="stroke:' + color + '"/>');
+      svgParts.push('<text class="mean-label" x="' + cx + '" y="' + (ym - 7) + '" text-anchor="middle">' + opts.fmt(m) + '</text>');
+
+      var n = pts.length;
+      pts.forEach(function (d, i) {
+        var jitter = n === 1 ? 0 : (i - (n - 1) / 2) * 12;
+        var px = cx + jitter;
+        var py = yFor(opts.get(d));
+        var filled = d.reward === 1;
+        svgParts.push(
+          '<g class="dot" data-h="' + h + '" data-i="' + DATA().indexOf(d) + '">' +
+          '<circle class="dot-ring" cx="' + px + '" cy="' + py + '" r="6.5"/>' +
+          '<circle cx="' + px + '" cy="' + py + '" r="5" fill="' + (filled ? color : "none") + '" stroke="' + color + '" stroke-width="2"/>' +
+          '</g>'
+        );
+      });
+
+      svgParts.push('<text class="cat-label" x="' + cx + '" y="' + (H - 10) + '" text-anchor="middle">' + h + '</text>');
+    });
+
+    svgParts.push('</svg>');
+
+    container.innerHTML =
+      '<p class="panel-title">' + opts.title + '</p>' +
+      '<p class="panel-unit">' + opts.unit + '</p>' +
+      svgParts.join("");
+
+    container.querySelectorAll(".dot").forEach(function (g) {
+      var d = DATA()[+g.getAttribute("data-i")];
+      g.addEventListener("mousemove", function (evt) {
+        showTip(evt,
+          '<b>' + d.harness + '</b> (' + MODEL[d.harness] + ') · ' + d.label + '<br>' +
+          'Durée : ' + fmt(d.duration_s) + ' s<br>' +
+          'Pic CPU : ' + fmt(d.peak_cpu_pct) + ' %<br>' +
+          'Mémoire moy. : ' + fmt(d.mean_mem_mb, 0) + ' Mo<br>' +
+          'Évaluation : ' + (d.reward === 1 ? "réussie" : "échouée")
+        );
+        moveTip(evt);
+      });
+      g.addEventListener("mouseleave", hideTip);
+    });
+  }
+
+  var panelsEl = document.getElementById("panels");
+  var p1 = document.createElement("div"); p1.className = "panel"; panelsEl.appendChild(p1);
+  var p2 = document.createElement("div"); p2.className = "panel"; panelsEl.appendChild(p2);
+  var p3 = document.createElement("div"); p3.className = "panel"; panelsEl.appendChild(p3);
+
+  function renderAll() {
+    renderTaskSwitch();
+    document.getElementById("chartsTitle").textContent =
+      "Empreinte du harness — " + TASKS[activeTask].title;
+    document.getElementById("meta").innerHTML =
+      "<code>" + TASKS[activeTask].title + "</code> : " + TASKS[activeTask].blurb;
+    renderHeadline();
+    renderLegend();
+    renderTable();
+    renderPanel(p1, {title:"Durée totale", unit:"secondes, du démarrage du sandbox à l'arrêt du harness", get:function(d){return d.duration_s;}, fmt:function(v){return fmt(v,0)+"s";}});
+    renderPanel(p2, {title:"Pic CPU du harness", unit:"% d'un cœur, maximum instantané sur le run", get:function(d){return d.peak_cpu_pct;}, fmt:function(v){return fmt(v,0)+"%";}});
+    renderPanel(p3, {title:"Mémoire moyenne du harness", unit:"Mo, moyenne de tous les échantillons", get:function(d){return d.mean_mem_mb;}, fmt:function(v){return fmt(v,0);}});
+  }
+
+  renderAll();
+})();
+</script>

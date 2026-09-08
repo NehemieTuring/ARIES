@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/hyscale-lab/aries/pkg/bridge/claudecodessh"
@@ -28,7 +30,7 @@ func main() {
 }
 
 func run() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	outputDir := "/tmp/aries-claudecode-harness-probe-run"
@@ -74,9 +76,17 @@ func run() error {
 	}()
 	fmt.Printf("bridge endpoint: %+v\n", endpoint)
 
+	fmt.Println("=== 2b. building the companion MCP file-tools binary ===")
+	mcpFilesBinaryPath, err := buildMCPFilesBinary(outputDir)
+	if err != nil {
+		return fmt.Errorf("build MCP file-tools binary: %w", err)
+	}
+	fmt.Println("built:", mcpFilesBinaryPath)
+
 	fmt.Println("=== 3. starting Claude Code harness (aries-claudecode:test-1) ===")
 	harness, err := claudecodeharness.New(claudecodeharness.Options{
 		Image: "aries-claudecode:test-1", OutputDir: outputDir, Logger: logger,
+		MCPFilesBinaryPath: mcpFilesBinaryPath,
 	})
 	if err != nil {
 		return fmt.Errorf("construct harness: %w", err)
@@ -86,8 +96,8 @@ func run() error {
 	err = harness.Start(ctx, core.HarnessRequest{
 		RunID: "probe-run", TaskID: "probe-task",
 		Endpoint: endpoint,
-		Model:    core.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-5", APIKeyEnv: "ANTHROPIC_API_KEY"},
-		Timeout:  90 * time.Second, OutputDir: outputDir,
+		Model:    core.ModelConfig{Provider: "anthropic", Model: "claude-sonnet-5", APIKeyEnv: "ANTHROPIC_API_KEY", WorkspaceID: os.Getenv("ARIES_ANTHROPIC_WORKSPACE_ID")},
+		Timeout:  150 * time.Second, OutputDir: outputDir,
 	})
 	if err != nil {
 		return fmt.Errorf("start harness: %w", err)
@@ -100,8 +110,9 @@ func run() error {
 	}()
 	fmt.Println("harness started")
 
-	fmt.Println("=== 4. running task ===")
-	instruction := "Create a file named hello.txt in the current directory containing exactly the text: ARIES harness test. Then print its contents with cat."
+	fmt.Println("=== 4. running task (exercises write_file + edit_file, not just Bash) ===")
+	instruction := "Create a file named greeting.txt in the current directory containing exactly the text: Hello ARIES (no trailing period or newline beyond one). " +
+		"Then edit that file to replace the word 'Hello' with 'Hi'. Then print the final contents of greeting.txt using cat."
 	result, err := harness.Run(ctx, instruction)
 	fmt.Printf("--- harness result ---\nstatus=%s\nfinal_response=%q\nduration=%s\nerror=%q\nlog_paths=%v\n",
 		result.Status, result.FinalResponse, result.Duration, result.Error, result.LogPaths)
@@ -109,18 +120,36 @@ func run() error {
 		fmt.Println("Run() returned error:", err)
 	}
 
-	fmt.Println("=== 5. verifying hello.txt in the sandbox ===")
-	verify, verifyErr := sandbox.Exec(ctx, core.Command{Path: "/bin/cat", Args: []string{"/root/hello.txt"}})
+	fmt.Println("=== 5. verifying greeting.txt in the sandbox (must be 'Hi ARIES', written+edited via the MCP file tools, not the harness's own filesystem) ===")
+	verify, verifyErr := sandbox.Exec(ctx, core.Command{Path: "/bin/cat", Args: []string{"/root/greeting.txt"}})
 	if verifyErr != nil {
 		fmt.Println("verify exec error:", verifyErr)
 	} else {
-		fmt.Printf("sandbox hello.txt contents: %q (exit=%d)\n", verify.Stdout, verify.ExitCode)
+		fmt.Printf("sandbox greeting.txt contents: %q (exit=%d)\n", verify.Stdout, verify.ExitCode)
 	}
 
-	if result.Status == core.StatusSucceeded && verifyErr == nil && verify.ExitCode == 0 {
-		fmt.Println("=== RESULT: OK — full harness (Start/Run/Stop) worked end-to-end ===")
+	editedCorrectly := verifyErr == nil && verify.ExitCode == 0 && strings.Contains(verify.Stdout, "Hi ARIES")
+	if result.Status == core.StatusSucceeded && editedCorrectly {
+		fmt.Println("=== RESULT: OK — full harness (Start/Run/Stop) worked end-to-end, write_file+edit_file landed in the sandbox ===")
 	} else {
 		fmt.Println("=== RESULT: FAILED — see details above and artifacts under", outputDir, "===")
 	}
 	return nil
+}
+
+// buildMCPFilesBinary compiles cmd/aries-claudecode-mcpfiles for linux/amd64
+// (matching this host and the pinned aries-claudecode:test-1 image) into
+// outputDir, so this probe stays self-contained instead of requiring the
+// binary to be pre-built and passed in separately. Must be run with the repo
+// root as the working directory (same assumption the rest of this probe and
+// cmd/aries-claudecode-probe already make about `go build`/`go run`
+// invocation).
+func buildMCPFilesBinary(outputDir string) (string, error) {
+	binaryPath := outputDir + "/aries-claudecode-mcpfiles"
+	cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/aries-claudecode-mcpfiles")
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("go build: %w (output: %s)", err, output)
+	}
+	return binaryPath, nil
 }

@@ -79,6 +79,9 @@ type ProfileModel struct {
 	ID        string `json:"id"`
 	BaseURL   string `json:"base_url"`
 	APIKeyEnv string `json:"api_key_env"`
+	// WorkspaceID: see core.ModelConfig.WorkspaceID's doc comment. Not a
+	// secret — an Anthropic workspace identifier, not a key value.
+	WorkspaceID string `json:"workspace_id,omitempty"`
 }
 
 type BenchmarkConfig struct {
@@ -146,7 +149,7 @@ func (c BridgeConfig) RetainBridgeRawLog() bool {
 }
 
 func (c Config) CoreModel() core.ModelConfig {
-	return core.ModelConfig{Provider: c.Runtime.Backend, BaseURL: c.Model.BaseURL, Model: c.Model.ID, APIKeyEnv: c.Model.APIKeyEnv}
+	return core.ModelConfig{Provider: c.Runtime.Backend, BaseURL: c.Model.BaseURL, Model: c.Model.ID, APIKeyEnv: c.Model.APIKeyEnv, WorkspaceID: c.Model.WorkspaceID}
 }
 
 // Versions contains the upstream version selections shared by profiles.
@@ -154,6 +157,7 @@ type Versions struct {
 	TerminalBench2 TerminalBench2Versions `json:"terminalbench2"`
 	OpenClaw       OpenClawVersions       `json:"openclaw"`
 	Hermes         HermesVersions         `json:"hermes"`
+	ClaudeCode     ClaudeCodeVersions     `json:"claudecode"`
 }
 
 type TerminalBench2Versions struct {
@@ -166,6 +170,14 @@ type OpenClawVersions struct {
 }
 
 type HermesVersions struct {
+	Image string `json:"image"`
+}
+
+// ClaudeCodeVersions has no fixed upstream registry image (Anthropic does not
+// publish one): Image names a locally built one instead — see
+// rapport_integration_claude_code.md §9.12 for the Dockerfile this is built
+// from.
+type ClaudeCodeVersions struct {
 	Image string `json:"image"`
 }
 
@@ -490,9 +502,8 @@ func (c *RuntimeConfig) validate() error {
 	case "anthropic":
 		// Mirrors deepseek: Claude Code calls the Anthropic API itself, so
 		// ARIES owns no managed process and accepts no runtime.config here.
-		// TODO(claude-code): revisit once the harness/bridge skeletons in
-		// pkg/harness/claudecode and pkg/bridge/claudecodessh are wired for
-		// real use (see rapport_integration_claude_code.md).
+		// Validated end-to-end against real infrastructure — see
+		// rapport_integration_claude_code.md §9.7-§9.10.
 		if c.Mode != "external" {
 			return errors.New("runtime.backend anthropic requires external mode")
 		}
@@ -607,6 +618,11 @@ func (c Versions) validate() error {
 			return fmt.Errorf("hermes.image: %w", err)
 		}
 	}
+	if strings.TrimSpace(c.ClaudeCode.Image) != "" {
+		if err := containerimage.ValidatePinnedTagOnly(c.ClaudeCode.Image); err != nil {
+			return fmt.Errorf("claudecode.image: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -620,6 +636,8 @@ func (c Versions) HarnessImage(harnessType string) (string, error) {
 		image, field = c.OpenClaw.Image, "openclaw.image"
 	case "hermes":
 		image, field = c.Hermes.Image, "hermes.image"
+	case "claude-code":
+		image, field = c.ClaudeCode.Image, "claudecode.image"
 	default:
 		return "", fmt.Errorf("unsupported harness type %q", harnessType)
 	}

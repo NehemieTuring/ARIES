@@ -49,10 +49,12 @@ func validateComponents(cfg config.Config) error {
 	case "openclaw":
 	case "hermes":
 	case "claude-code":
-		// STATUS: not yet ready for real runs — see
-		// rapport_integration_claude_code.md. The harness/bridge skeletons
-		// exist but the SSH-forwarding wrapper and the wire behavior it
-		// depends on are unverified.
+		// Validated end-to-end against real infrastructure (Docker, SSH,
+		// Claude Code, the real Anthropic API) — see
+		// rapport_integration_claude_code.md §9.7/§9.8/§9.10. Needs
+		// cfg.Versions.ClaudeCode.Image (a locally built image, no upstream
+		// registry tag exists — see that field's doc comment) and, for
+		// identity-linked API keys, model.workspace_id in the profile.
 	default:
 		return fmt.Errorf("unsupported harness type %q", cfg.Harness.Type)
 	}
@@ -176,11 +178,14 @@ func newHarness(cfg config.Config, outputRoot string, lookup func(string) ([]byt
 		}
 		return app.HarnessInstance{Harness: manager, Close: manager.Close}, nil
 	case "claude-code":
-		// TODO(claude-code): cfg.Versions needs a ClaudeCode image entry
-		// (configs/versions.json) before this can resolve a real pinned tag;
-		// left as cfg.Versions.Hermes.Image here only so this file compiles as
-		// a skeleton — replace before any real use.
-		manager, err := claudecodeharness.New(claudecodeharness.Options{Image: cfg.Versions.Hermes.Image, OutputDir: outputRoot, APIKeyLookup: lookup, Logger: logger})
+		mcpFilesBinaryPath, err := resolveMCPFilesBinaryPath()
+		if err != nil {
+			return app.HarnessInstance{}, fmt.Errorf("resolve Claude Code MCP file-tools binary: %w", err)
+		}
+		manager, err := claudecodeharness.New(claudecodeharness.Options{
+			Image: cfg.Versions.ClaudeCode.Image, OutputDir: outputRoot, APIKeyLookup: lookup, Logger: logger,
+			MCPFilesBinaryPath: mcpFilesBinaryPath,
+		})
 		if err != nil {
 			return app.HarnessInstance{}, fmt.Errorf("construct Claude Code harness: %w", err)
 		}
@@ -188,6 +193,27 @@ func newHarness(cfg config.Config, outputRoot string, lookup func(string) ([]byt
 	default:
 		return app.HarnessInstance{}, fmt.Errorf("unsupported harness type %q", cfg.Harness.Type)
 	}
+}
+
+// resolveMCPFilesBinaryPath locates the compiled cmd/aries-claudecode-mcpfiles
+// binary — see pkg/harness/claudecode.Options.MCPFilesBinaryPath's doc
+// comment for what it is and why it is required. ARIES_CLAUDE_CODE_MCPFILES_BIN
+// overrides the default of a sibling binary next to this process's own
+// executable (i.e. built alongside `aries` itself, the same convention a
+// `go build ./...` of this module already produces).
+//
+// TODO(claude-code): proper cfg-file plumbing (alongside the cfg.Versions
+// image TODO above) belongs here eventually; this env-var override is a
+// stand-in until that exists.
+func resolveMCPFilesBinaryPath() (string, error) {
+	if override := os.Getenv("ARIES_CLAUDE_CODE_MCPFILES_BIN"); override != "" {
+		return override, nil
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve aries executable path: %w", err)
+	}
+	return filepath.Join(filepath.Dir(executable), "aries-claudecode-mcpfiles"), nil
 }
 
 func newSandbox(cfg config.Config, outputRoot, runID, occurrenceID string, gpuIndices []int, logger *logrus.Logger) (app.SandboxInstance, error) {

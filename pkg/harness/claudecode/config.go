@@ -44,13 +44,82 @@ func renderSettings(model core.ModelConfig, maxTurns int) ([]byte, error) {
 		"apiKeyHelper": "cat " + modelKeyPath,
 		"model":        model.Model,
 		"max_turns":    maxTurns,
+		// permissions.deny disables Claude Code's native Write/Read/Edit/Glob/
+		// Grep tools outright: they operate on THIS container's own local
+		// filesystem (Node.js fs), which can never be routed to the sandbox
+		// (rapport_integration_claude_code.md §7.5ter) — renderMCPConfig's
+		// separate file replaces them with sandbox-routed equivalents
+		// (cmd/aries-claudecode-mcpfiles, decoded by
+		// pkg/bridge/claudecodessh/fileops.go). See §9/§9.5 for the design.
+		//
+		// CONFIRMED (§9.5): a real `claude mcp --help`/`claude --help` on the
+		// pinned CLI (2.1.245) shows MCP servers are NOT read from
+		// settings.json — only `--mcp-config <file>` (see harness.go's Run,
+		// which passes mcpConfigContainerPath), `.mcp.json`, or `claude mcp
+		// add` register them. An earlier version of this function put
+		// `mcpServers` here; it was silently ignored (confirmed by a debug
+		// trace showing the companion server was never even spawned).
+		// `permissions.deny` alone, by contrast, IS a real settings.json
+		// field and was confirmed to not break/hang the CLI on its own.
+		"permissions": map[string]any{
+			"deny": []string{"Write", "Read", "Edit", "Glob", "Grep"},
+		},
 	}
+	env := map[string]string{}
 	if strings.TrimSpace(model.BaseURL) != "" {
-		settings["env"] = map[string]string{"ANTHROPIC_BASE_URL": model.BaseURL}
+		env["ANTHROPIC_BASE_URL"] = model.BaseURL
+	}
+	if strings.TrimSpace(model.WorkspaceID) != "" {
+		// NOT ANTHROPIC_WORKSPACE_ID — tried first, had no effect (see
+		// harness.go's Start, which sets the real, confirmed-working
+		// ANTHROPIC_CUSTOM_HEADERS as a container env var). Setting it here
+		// too, in settings.json's "env", is redundant with that but
+		// harmless — kept for whatever settings.json's "env" reaches that a
+		// container-level var might not (unconfirmed either way).
+		env["ANTHROPIC_CUSTOM_HEADERS"] = "anthropic-workspace-id: " + model.WorkspaceID
+	}
+	if len(env) > 0 {
+		settings["env"] = env
 	}
 	encoded, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("render Claude Code settings: %w", err)
+	}
+	return append(encoded, '\n'), nil
+}
+
+// renderMCPConfig builds the JSON file passed via `claude ... --mcp-config
+// <file> --strict-mcp-config` (see harness.go's Run) — the confirmed-correct
+// way to register the companion MCP file-tools server, unlike settings.json's
+// mcpServers key (see renderSettings's doc comment and §9.5). `--strict-mcp-
+// config` means only servers listed in this file are used, ignoring any
+// ambient `.mcp.json`/`claude mcp add` configuration this container might
+// otherwise pick up.
+func renderMCPConfig(endpoint core.ToolEndpoint) ([]byte, error) {
+	config := map[string]any{
+		"mcpServers": map[string]any{
+			"ariesfiles": map[string]any{
+				"type":    "stdio",
+				"command": mcpFilesContainerPath,
+				"args":    []string{},
+				// Passed explicitly rather than relied on via container-level
+				// env inheritance: apiKeyHelper's own ANTHROPIC_API_KEY-
+				// stripping behavior (see renderSettings's doc comment) is a
+				// precedent for Claude Code sanitizing environments it hands
+				// to processes it spawns itself — unconfirmed for MCP server
+				// subprocesses specifically, so this costs nothing and
+				// removes the question.
+				"env": map[string]string{
+					"ARIES_BRIDGE_ADDRESS":  endpoint.Address,
+					"ARIES_BRIDGE_USERNAME": endpoint.Username,
+					"ARIES_BRIDGE_IDENTITY": identityContainerFS,
+				},
+			},
+		},
+	}
+	encoded, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("render Claude Code MCP config: %w", err)
 	}
 	return append(encoded, '\n'), nil
 }
@@ -373,14 +442,29 @@ func (manager *Manager) runtimeArchive(active *session, settings []byte) ([]byte
 		return nil, fmt.Errorf("read Claude Code SSH identity: %w", err)
 	}
 	defer clear(identity)
+	mcpFilesBinary, err := os.ReadFile(manager.mcpFilesBinary)
+	if err != nil {
+		return nil, fmt.Errorf("read Claude Code MCP file-tools binary: %w", err)
+	}
+	mcpConfig, err := renderMCPConfig(active.endpoint)
+	if err != nil {
+		return nil, err
+	}
 	files := map[string]stagedFile{
-		strings.TrimPrefix(settingsContainerPath, "/"): {content: settings, mode: 0o600},
-		strings.TrimPrefix(modelKeyPath, "/"):          {content: active.apiKey, mode: 0o600},
-		strings.TrimPrefix(identityContainerFS, "/"):   {content: identity, mode: 0o600},
+		strings.TrimPrefix(settingsContainerPath, "/"):  {content: settings, mode: 0o600},
+		strings.TrimPrefix(modelKeyPath, "/"):           {content: active.apiKey, mode: 0o600},
+		strings.TrimPrefix(identityContainerFS, "/"):    {content: identity, mode: 0o600},
+		strings.TrimPrefix(mcpConfigContainerPath, "/"): {content: mcpConfig, mode: 0o600},
 		// Replaces the image's real /bin/bash outright — see bashWrapperPath
 		// and bashWrapperScript's doc comments for why no bash.real fallback
 		// is staged alongside it.
 		strings.TrimPrefix(bashWrapperPath, "/"): {content: []byte(bashWrapperScript), mode: 0o755},
+		// The companion MCP file-tools server (see this package's mcpServers
+		// entry in renderSettings and rapport_integration_claude_code.md §9).
+		// Must be linux/amd64 (or whatever arch the pinned image actually
+		// runs), matching the caller-supplied MCPFilesBinaryPath — see
+		// harness.go's Options.MCPFilesBinaryPath doc comment.
+		strings.TrimPrefix(mcpFilesContainerPath, "/"): {content: mcpFilesBinary, mode: 0o755},
 	}
 	return stageArchive(files)
 }
@@ -396,7 +480,7 @@ func (manager *Manager) runtimeArchive(active *session, settings []byte) ([]byte
 func stageArchive(files map[string]stagedFile) ([]byte, error) {
 	var output bytes.Buffer
 	writer := tar.NewWriter(&output)
-	directories := []string{"run/aries", "run/aries/claude-code", "run/aries/claude-code/ssh", "home/aries/workspace"}
+	directories := []string{"run/aries", "run/aries/claude-code", "run/aries/claude-code/ssh", "run/aries/claude-code/bin", "home/aries/workspace"}
 	for _, name := range directories {
 		mode := int64(0o700)
 		if name == "home/aries/workspace" {

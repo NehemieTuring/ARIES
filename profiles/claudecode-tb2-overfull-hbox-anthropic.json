@@ -1,0 +1,35 @@
+{
+  "name": "claudecode-tb2-overfull-hbox-anthropic",
+  "versions_file": "../configs/versions.json",
+  "overrides_file": "",
+  "execution": {
+    "concurrency": 1
+  },
+  "benchmark": {
+    "type": "terminalbench2",
+    "root": ".cache/terminal-bench-2",
+    "tasks": [
+      "overfull-hbox"
+    ]
+  },
+  "harness": {
+    "type": "claude-code"
+  },
+  "sandbox": {
+    "type": "docker"
+  },
+  "bridge": {
+    "type": "claude-code-ssh"
+  },
+  "runtime": {
+    "backend": "anthropic",
+    "mode": "external"
+  },
+  "model": {
+    "base_url": "https://api.anthropic.com",
+    "id": "claude-sonnet-5",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "workspace_id": "wrkspc_01NSx3fAs1WjdZNDvQqdyMWq"
+  },
+  "output_dir": "runs"
+}
