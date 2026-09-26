@@ -9,7 +9,8 @@ plugin discovery.
 | Agent harness | **OpenClaw** — text is the default mode; realtime voice is also supported | Starts and stops the pinned harness container; retains private text or realtime artifacts | `harness.type: "openclaw"`; omit `harness.mode` or use `"agent"` for text; use `"realtime"` with `profiles/openclaw-tb2-fix-git-realtime-deepseek.json` |
 | Agent harness | **Hermes** — text only; the pinned upstream image is used unmodified. Verified against `v2026.5.29.2` and `v2026.8.3` | Starts and stops the pinned harness container; runs one Hermes one-shot and retains its output, container log, and exported session trajectory | `harness.type: "hermes"`; requires `bridge.type: "hermes-ssh"`; `profiles/hermes-tb2-fix-git-deepseek.json` |
 | Benchmark | **Terminal-Bench 2** — current supported benchmark | Verifies the pinned checkout, loads tasks, sanitizes verifier paths, and evaluates | `benchmark.type: "terminalbench2"`; checkout and revision in `configs/versions.json` |
-| Tool sandbox | **Docker** — current supported sandbox | Owns task containers and networks through the Moby Go SDK | `sandbox.type: "docker"`; task images come from pinned Terminal-Bench task data |
+| Tool sandbox | **Docker** — current default sandbox | Owns task containers and networks through the Moby Go SDK | `sandbox.type: "docker"`; task images come from pinned Terminal-Bench task data |
+| Tool sandbox | **Sandlock** — process sandbox, not a container | Runs each task command on the host through the Sandlock Go SDK (Landlock, seccomp, filesystem and network policy, COW). Does not replace Docker semantics | `sandbox.type: "sandlock"`; optional `sandbox.sandlock.net_allow`; Linux 6.12+ and `libsandlock_ffi` |
 | Tool bridge | **OpenClaw SSH** — pair-specific bridge for OpenClaw | Owns temporary SSH access, evidence, credentials, listener, sessions, and revocation | `bridge.type: "openclaw-ssh"`; requires `bin/aries-ssh` beside `bin/aries` |
 | Tool bridge | **Hermes SSH** — pair-specific bridge for Hermes | Same ownership; accepts Hermes's own SSH grammar and denies its `~/.hermes` file sync | `bridge.type: "hermes-ssh"`; requires `harness.type: "hermes"`; needs no helper binary because Hermes runs OpenSSH itself |
 | Model service | **DeepSeek** — supported external OpenAI-compatible endpoint | Validates model access; does not own the service | `runtime.backend: "deepseek"`, `runtime.mode: "external"`; `profiles/openclaw-tb2-fix-git-deepseek.json` |
@@ -20,7 +21,8 @@ plugin discovery.
 The four Runner implementations are chosen by `benchmark.type`, `harness.type`,
 `sandbox.type`, and `bridge.type`. At present, the values in the table are the
 only wired choices. Concrete construction is explicit rather than registered or
-discovered.
+discovered. `ARIES_SANDBOX_TYPE`, from the process environment or the
+repository-root `.env` read by `bin/aries`, overrides `sandbox.type`.
 
 Each bridge implements exactly one harness's SSH grammar, so the harness and
 bridge values must be paired: `openclaw` with `openclaw-ssh`, and `hermes` with

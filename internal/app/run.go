@@ -51,6 +51,10 @@ func Setup(ctx context.Context, profilePath string, stdout io.Writer, dependenci
 	if err != nil {
 		return err
 	}
+	cfg, err = selectSandboxType(cfg, dependencies.ExecutablePath)
+	if err != nil {
+		return err
+	}
 	if err := validateWiredComponents(cfg, dependencies.Wiring); err != nil {
 		return err
 	}
@@ -73,6 +77,10 @@ func Run(ctx context.Context, profilePath string, stdout io.Writer, dependencies
 		logger = newLogger()
 	}
 	cfg, err := config.Load(profilePath)
+	if err != nil {
+		return err
+	}
+	cfg, err = selectSandboxType(cfg, dependencies.ExecutablePath)
 	if err != nil {
 		return err
 	}

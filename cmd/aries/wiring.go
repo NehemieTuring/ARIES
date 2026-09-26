@@ -22,6 +22,7 @@ import (
 	nvidiamonitor "github.com/hyscale-lab/aries/pkg/monitor/nvidia"
 	"github.com/hyscale-lab/aries/pkg/runner"
 	dockersandbox "github.com/hyscale-lab/aries/pkg/sandbox/docker"
+	sandlocksandbox "github.com/hyscale-lab/aries/pkg/sandbox/sandlock"
 	"github.com/sirupsen/logrus"
 )
 
@@ -60,6 +61,7 @@ func validateComponents(cfg config.Config) error {
 	}
 	switch cfg.Sandbox.Type {
 	case "docker":
+	case "sandlock":
 	default:
 		return fmt.Errorf("unsupported sandbox type %q", cfg.Sandbox.Type)
 	}
@@ -232,6 +234,29 @@ func newSandbox(cfg config.Config, outputRoot, runID, occurrenceID string, gpuIn
 			gpuSource, err := nvidiamonitor.NewSource(nvidiamonitor.Options{TaskID: occurrenceID, GPUIndices: gpuIndices})
 			if err != nil {
 				return app.SandboxInstance{}, errors.Join(fmt.Errorf("construct NVIDIA resource source: %w", err), source.Close(), manager.Close())
+			}
+			resources = &combinedResourceSource{container: source, gpu: gpuSource}
+		}
+		return app.SandboxInstance{Sandbox: manager, Resources: resources, Close: manager.Close}, nil
+	case "sandlock":
+		manager, err := sandlocksandbox.New(sandlocksandbox.Options{
+			OutputDir:     outputRoot,
+			Logger:        logger,
+			NetAllow:      cfg.Sandbox.Sandlock.NetAllow,
+			FSDenied:      cfg.Sandbox.Sandlock.FSDenied,
+			MaxProcesses:  cfg.Sandbox.Sandlock.MaxProcesses,
+			MaxOpenFiles:  cfg.Sandbox.Sandlock.MaxOpenFiles,
+			MaxCPUPercent: cfg.Sandbox.Sandlock.MaxCPUPercent,
+		})
+		if err != nil {
+			return app.SandboxInstance{}, fmt.Errorf("construct Sandlock sandbox: %w", err)
+		}
+		source := sandlocksandbox.NewResourceSource(occurrenceID, "sandlock", 0)
+		var resources monitor.ResourceSource = source
+		if len(gpuIndices) != 0 {
+			gpuSource, err := nvidiamonitor.NewSource(nvidiamonitor.Options{TaskID: occurrenceID, GPUIndices: gpuIndices})
+			if err != nil {
+				return app.SandboxInstance{}, errors.Join(fmt.Errorf("construct NVIDIA resource source: %w", err), manager.Close())
 			}
 			resources = &combinedResourceSource{container: source, gpu: gpuSource}
 		}

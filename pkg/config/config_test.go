@@ -291,3 +291,20 @@ func TestBridgeRawLogDefaultsToDropped(t *testing.T) {
 		t.Fatal("retain_raw_log:true must retain the raw log")
 	}
 }
+
+func TestSandboxConfigParsesSandlock(t *testing.T) {
+	var cfg SandboxConfig
+	if err := json.Unmarshal([]byte(`{"type":"sandlock","sandlock":{"net_allow":["github.com:443"],"fs_denied":["/opt"],"max_processes":8,"max_open_files":64,"max_cpu_percent":50}}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Type != "sandlock" || len(cfg.Sandlock.NetAllow) != 1 || cfg.Sandlock.NetAllow[0] != "github.com:443" || cfg.Sandlock.MaxProcesses != 8 || cfg.Sandlock.MaxCPUPercent != 50 {
+		t.Fatalf("config = %+v", cfg)
+	}
+	var docker SandboxConfig
+	if err := json.Unmarshal([]byte(`{"type":"docker"}`), &docker); err != nil {
+		t.Fatal(err)
+	}
+	if docker.Type != "docker" || docker.Sandlock.NetAllow != nil {
+		t.Fatalf("docker config = %+v", docker)
+	}
+}
