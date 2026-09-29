@@ -135,4 +135,4 @@ Harnesses manage `MCP` execution and network boundaries as follows:
 - **OpenClaw**: Configures `MCP` servers in the rendered `openclaw.json` under `mcp.servers`. In `sandboxed` execution, `MCP` tool access is gated by appending `"bundle-mcp"` to `tools.sandbox.tools.alsoAllow`.
 - **Hermes**: Renders configured `MCP` servers into `config.yaml` under `mcp_servers`, enabling in-container agent discovery and invocation.
 
-ARIES does not run host-side `MCP` client bridges; tool invocation and communication remain entirely within the agent container boundary.
+Tool invocation and communication remain entirely within the agent container boundary.

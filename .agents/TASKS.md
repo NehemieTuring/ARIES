@@ -8,7 +8,7 @@
 - Implemented container-native MCP execution for OpenClaw and Hermes harnesses:
   - OpenClaw renders MCP servers into `openclaw.json` and gates sandboxed execution via `"bundle-mcp"` in `alsoAllow`.
   - Hermes renders MCP servers into `config.yaml` under `mcp_servers`.
-- Eliminated host-side `MCPClient` instances and external `CallTool` dispatches, keeping all tool execution contained within the agent harness container.
+- Tool invocation and execution remain strictly contained within the agent harness container.
 - Cleaned dependency graph: removed external `github.com/modelcontextprotocol/go-sdk` dependency, restoring upstream `go.mod` and `go.sum`.
 
 ## Verifier timeout floor

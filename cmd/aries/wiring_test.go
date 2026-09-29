@@ -460,7 +460,7 @@ func TestNewHarness_WiresMCPServers(t *testing.T) {
 	}
 
 	invalidServers := []core.MCPServerConfig{
-		{Name: "bad", Command: "mcp-server", Env: map[string]string{"SECRET": "invalid-secret-value!"}},
+		{Name: "bad", Command: "mcp-server", SecretEnv: map[string]string{"SECRET": "invalid-secret-value!"}},
 	}
 	for _, harnessType := range []string{"openclaw", "hermes"} {
 		t.Run(harnessType+"_invalid", func(t *testing.T) {

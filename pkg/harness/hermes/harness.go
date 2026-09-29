@@ -191,22 +191,22 @@ type Manager struct {
 }
 
 type session struct {
-	runID         string
-	taskID        string
-	attemptID     string
-	containerName string
-	containerID   string
-	artifactDir   string
-	endpoint      core.ToolEndpoint
-	model         core.ModelConfig
-	agentTimeout  time.Duration
-	apiKey        []byte
-	extractAPIKey []byte
-	voiceAPIKey   []byte
-	mcpSecrets    [][]byte
+	runID          string
+	taskID         string
+	attemptID      string
+	containerName  string
+	containerID    string
+	artifactDir    string
+	endpoint       core.ToolEndpoint
+	model          core.ModelConfig
+	agentTimeout   time.Duration
+	apiKey         []byte
+	extractAPIKey  []byte
+	voiceAPIKey    []byte
+	mcpSecrets     [][]byte
 	mcpSecretFiles map[string][]byte
-	runAttempted  bool
-	logPaths      []string
+	runAttempted   bool
+	logPaths       []string
 }
 
 type speechSynthesizer interface {
