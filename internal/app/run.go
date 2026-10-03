@@ -215,6 +215,9 @@ func Run(ctx context.Context, profilePath string, stdout io.Writer, dependencies
 	if runtime == nil {
 		runtimeEntry.WithField("runtime_state", "healthy").Info("model runtime lifecycle")
 	}
+	if harnessLookup == nil {
+		harnessLookup = environmentAPIKeyLookup
+	}
 
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()

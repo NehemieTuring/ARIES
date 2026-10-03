@@ -102,6 +102,11 @@ func prepareBackend(cfg config.Config, outputDir string) (app.PreparedBackend, e
 			return app.PreparedBackend{}, errors.New("Anthropic runtime must be external")
 		}
 		return app.PreparedBackend{Model: model}, nil
+	case "gemini":
+		if cfg.Runtime.Mode != "external" {
+			return app.PreparedBackend{}, errors.New("Gemini runtime must be external")
+		}
+		return app.PreparedBackend{Model: model}, nil
 	case "sglang":
 		native, err := runtimesglang.LoadNativeConfig(cfg.Runtime.Config.ResolvedFile, cfg.Model.ID, cfg.Model.BaseURL)
 		if err != nil {

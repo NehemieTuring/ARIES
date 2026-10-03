@@ -107,6 +107,16 @@ func TestRuntimeCombinationValidation(t *testing.T) {
 			t.Fatalf("accepted invalid case %d", i)
 		}
 	}
+	gemini := strings.Replace(validConfig, `"backend":"deepseek"`, `"backend":"gemini"`, 1)
+	gemini = strings.Replace(gemini, `http://127.0.0.1:8080`, `https://generativelanguage.googleapis.com/v1beta/openai`, 1)
+	cfg, err := Decode(strings.NewReader(gemini))
+	if err != nil || cfg.Runtime.Backend != "gemini" || cfg.Runtime.Mode != "external" || cfg.CoreModel().Provider != "gemini" {
+		t.Fatalf("gemini=%#v err=%v", cfg.Runtime, err)
+	}
+	managedGemini := strings.Replace(gemini, `"mode":"external"`, `"mode":"managed","config":{"file":"native.yaml"}`, 1)
+	if _, err := Decode(strings.NewReader(managedGemini)); err == nil {
+		t.Fatal("accepted managed gemini")
+	}
 }
 
 func TestDecodeExecutionAndURLValidation(t *testing.T) {
@@ -160,7 +170,7 @@ func TestCheckedInProfilesLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 10 {
+	if len(paths) != 12 {
 		t.Fatalf("profiles=%v", paths)
 	}
 	for _, path := range paths {

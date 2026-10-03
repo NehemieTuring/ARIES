@@ -15,6 +15,7 @@ plugin discovery.
 | Tool bridge | **Hermes SSH** — pair-specific bridge for Hermes | Same ownership; accepts Hermes's own SSH grammar and denies its `~/.hermes` file sync | `bridge.type: "hermes-ssh"`; requires `harness.type: "hermes"`; needs no helper binary because Hermes runs OpenSSH itself |
 | Model service | **DeepSeek** — supported external OpenAI-compatible endpoint | Validates model access; does not own the service | `runtime.backend: "deepseek"`, `runtime.mode: "external"`; `profiles/openclaw-tb2-fix-git-deepseek.json` |
 | Model service | **SGLang** — supported external or ARIES-managed runtime | Validates both modes; in managed mode owns one host process for the profile run | `runtime.backend: "sglang"`; `profiles/openclaw-tb2-fix-git-sglang.json`; `configs/sglang/qwen3-8b-local.yaml` |
+| Model service | **Gemini** — external OpenAI-compatible endpoint | Validates model access; does not own the service. OpenClaw and Hermes call `chat/completions` themselves | `runtime.backend: "gemini"`, `runtime.mode: "external"`; `GEMINI_API_KEY`; `profiles/openclaw-tb2-fix-git-gemini.json`; `profiles/hermes-tb2-fix-git-gemini.json` |
 
 ## Configuration boundaries
 
@@ -30,11 +31,11 @@ bridge values must be paired: `openclaw` with `openclaw-ssh`, and `hermes` with
 additionally requires `/bin/bash` in the task image, because every tool call it
 issues is `bash -c` on the remote.
 
-Model services sit outside the four-role Runner. DeepSeek must be external and uses the
+Model services sit outside the four-role Runner. DeepSeek and Gemini must be external and use the
 configured remote base URL. SGLang accepts an external endpoint backed by its
 native YAML, or a managed mode with an explicit Python executable, startup and
-stop timeouts, and optional validated GPU indices. DeepSeek is not a managed
-runtime, and SGLang is not a fifth Runner role.
+stop timeouts, and optional validated GPU indices. DeepSeek and Gemini are not managed
+runtimes, and SGLang is not a fifth Runner role.
 
 Realtime mode requires `harness.realtime` TTS and session settings and the
 separate `OPENAI_API_KEY` named by `harness.realtime.tts.api_key_env`. The TTS
@@ -48,6 +49,8 @@ Start with one of the checked-in profiles:
 - `profiles/openclaw-tb2-fix-git-sglang.json`
 - `profiles/openclaw-tb2-fix-git-realtime-deepseek.json`
 - `profiles/hermes-tb2-fix-git-deepseek.json`
+- `profiles/openclaw-tb2-fix-git-gemini.json`
+- `profiles/hermes-tb2-fix-git-gemini.json`
 
 The SGLang profile references
 `configs/sglang/qwen3-8b-local.yaml`. Additional checked-in DeepSeek profiles

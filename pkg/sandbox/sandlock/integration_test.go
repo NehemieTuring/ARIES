@@ -75,3 +75,44 @@ func TestToolCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestFixGitVerifierCanInstallUv(t *testing.T) {
+	if _, err := os.Stat("/var/run/docker.sock"); err != nil {
+		t.Skip(err)
+	}
+	manager, err := New(Options{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	live, err := manager.Start(context.Background(), core.SandboxRequest{
+		RunID: "run", TaskID: "fix-git",
+		Environment: core.Environment{
+			Image: "alexgshaw/fix-git:20251031", Workdir: "/app/personal-site", AllowNetwork: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Stop(context.Background(), live) })
+	result, err := live.(runner.Sandbox).Exec(context.Background(), core.Command{
+		Path: "/bin/bash",
+		Args: []string{"-c", `set -eu
+command -v curl
+test -x "$HOME/.local/bin/uv"
+test -x "$HOME/.local/bin/uvx"
+curl -LsSf https://astral.sh/uv/0.9.5/install.sh | sh || true
+test -x "$HOME/.local/bin/uv"
+test -x "$HOME/.local/bin/uvx"
+. "$HOME/.local/bin/env"
+command -v uvx
+"$HOME/.local/bin/uv" python install 3.13
+"$HOME/.local/bin/uv" run --python 3.13 python -c 'print("uv-python-ok")'
+"$HOME/.local/bin/uvx" -p 3.13 pytest --version
+`},
+	})
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("uv install = %+v, %v", result, err)
+	}
+	t.Logf("stdout=%s stderr=%s", result.Stdout, result.Stderr)
+}

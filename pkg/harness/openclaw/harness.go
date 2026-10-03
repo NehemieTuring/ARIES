@@ -625,6 +625,9 @@ func (manager *Manager) gatewayURL(ctx context.Context, active *session) (string
 	if err != nil {
 		return "", fmt.Errorf("inspect OpenClaw gateway port: %w", err)
 	}
+	if inspection.Container.HostConfig != nil && inspection.Container.HostConfig.NetworkMode == "host" {
+		return "ws://" + net.JoinHostPort("127.0.0.1", gatewayListenPort), nil
+	}
 	if inspection.Container.NetworkSettings == nil {
 		return "", errors.New("OpenClaw gateway port binding is missing")
 	}
@@ -1121,7 +1124,7 @@ func (manager *Manager) runtimeArchive(active *session, configuration []byte) ([
 		"run/aries/model.key":        {content: active.apiKey, mode: 0o600},
 		"run/aries/gateway.key":      {content: active.gatewayToken, mode: 0o600},
 		"run/aries/launch":           {content: launcherScript(active.model.APIKeyEnv, manager.realtimeAPIKeyEnv(active)), mode: 0o555},
-		"run/aries/gateway-proxy.js": {content: gatewayProxyScript(), mode: 0o555},
+		"run/aries/gateway-proxy.js": {content: gatewayProxyScript(gatewayListenHost(active.endpoint.Network)), mode: 0o555},
 		"run/aries/gateway-launcher": {content: gatewayLauncherScript(), mode: 0o555},
 		"run/aries/ssh/id_ed25519":   {content: identity, mode: 0o600},
 		"run/aries/ssh/known_hosts":  {content: knownHosts, mode: 0o600},
@@ -1168,10 +1171,20 @@ exit "$status"
 `)
 }
 
-func gatewayProxyScript() []byte {
+func gatewayListenHost(network string) string {
+	if network == "host" {
+		return "127.0.0.1"
+	}
+	return "0.0.0.0"
+}
+
+func gatewayProxyScript(listenHost string) []byte {
+	if listenHost != "127.0.0.1" && listenHost != "0.0.0.0" {
+		listenHost = "0.0.0.0"
+	}
 	return []byte(`#!/usr/bin/env node
 const net = require("net");
-const listenHost = "0.0.0.0";
+const listenHost = "` + listenHost + `";
 const listenPort = ` + gatewayListenPort + `;
 const targetHost = "127.0.0.1";
 const targetPort = ` + upstreamGatewayPort + `;

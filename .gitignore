@@ -38,11 +38,7 @@ DEEPSEEK_API.key
 # Editor/IDE
 # .idea/
 # .vscode/
-.codex/*
-!.codex/agents/
-!.codex/agents/**
-!.codex/skills/
-!.codex/skills/**
-.codex/skills/.system/**
-!.codex/prompts/
-!.codex/prompts/**
+
+# Local agent tool configuration
+.cursor/
+.codex/

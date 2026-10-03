@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hyscale-lab/aries/pkg/core"
@@ -84,19 +86,17 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 	defer s.untrack(proc)
 	defer proc.Close()
 
-	stdinDone := make(chan struct{})
-	go func() {
-		defer close(stdinDone)
-		if proc.Stdin == nil {
-			return
-		}
-		limited := io.LimitReader(stdin, maxExecBytes+1)
-		written, _ := io.Copy(proc.Stdin, limited)
-		_ = proc.Stdin.Close()
-		if written > maxExecBytes {
-			_ = proc.Kill()
-		}
-	}()
+	// Wait closes the Sandlock stdin fd. Keep a duplicate so that close does
+	// not drop bytes, and do not wait for the caller's EOF before reaping.
+	// The SSH bridge leaves the channel open until it sees an exit status, so
+	// waiting here holds the sandbox name and every later popen fails.
+	stdinCopy, err := duplicateStdin(proc.Stdin)
+	if err != nil {
+		_ = proc.Kill()
+		_ = proc.Close()
+		return failure(), err
+	}
+	go copyStdin(proc, stdinCopy, stdin)
 	copyErr := make(chan error, 2)
 	go func() { _, err := io.Copy(stdout, proc.Stdout); copyErr <- err }()
 	go func() { _, err := io.Copy(stderr, proc.Stderr); copyErr <- err }()
@@ -105,7 +105,6 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 	var result *sandlocksdk.Result
 	var waitErr error
 	go func() {
-		<-stdinDone
 		result, waitErr = proc.Wait()
 		close(waitDone)
 	}()
@@ -116,9 +115,6 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 	case <-execCtx.Done():
 		timedOut = errors.Is(execCtx.Err(), context.DeadlineExceeded)
 		canceled = errors.Is(execCtx.Err(), context.Canceled)
-		if proc.Stdin != nil {
-			_ = proc.Stdin.Close()
-		}
 		_ = proc.Kill()
 		<-waitDone
 	case <-waitDone:
@@ -157,6 +153,28 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 	record.ExitCode = exitCode
 	s.record(record)
 	return core.CommandResult{ExitCode: exitCode, Duration: ended.Sub(started)}, nil
+}
+
+func duplicateStdin(stdin *os.File) (*os.File, error) {
+	if stdin == nil {
+		return nil, nil
+	}
+	fd, err := syscall.Dup(int(stdin.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("duplicate sandlock stdin: %w", err)
+	}
+	return os.NewFile(uintptr(fd), "sandlock-stdin"), nil
+}
+
+func copyStdin(proc *sandlocksdk.Process, stdinCopy *os.File, stdin io.Reader) {
+	if stdinCopy == nil {
+		return
+	}
+	defer stdinCopy.Close()
+	written, _ := io.Copy(stdinCopy, io.LimitReader(stdin, maxExecBytes+1))
+	if written > maxExecBytes {
+		_ = proc.Kill()
+	}
 }
 
 type limitedWriter struct {

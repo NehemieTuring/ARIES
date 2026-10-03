@@ -380,8 +380,8 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%s is required", check.name)
 		}
 	}
-	if c.Runtime.Backend != "deepseek" && c.Runtime.Backend != "sglang" && c.Runtime.Backend != "anthropic" {
-		return errors.New("runtime.backend must be deepseek, sglang, or anthropic")
+	if c.Runtime.Backend != "deepseek" && c.Runtime.Backend != "sglang" && c.Runtime.Backend != "anthropic" && c.Runtime.Backend != "gemini" {
+		return errors.New("runtime.backend must be deepseek, sglang, anthropic, or gemini")
 	}
 	if c.Harness.Mode == "" {
 		c.Harness.Mode = "agent"
@@ -524,9 +524,17 @@ func (c *RuntimeConfig) validate() error {
 			return errors.New("external anthropic runtime.config must be empty")
 		}
 		return nil
+	case "gemini":
+		if c.Mode != "external" {
+			return errors.New("runtime.backend gemini requires external mode")
+		}
+		if c.Config.File != "" || c.Config.Executable != "" || c.Config.StartupTimeoutText != "" || c.Config.StopTimeoutText != "" || len(c.Config.GPUIndices) != 0 {
+			return errors.New("external gemini runtime.config must be empty")
+		}
+		return nil
 	case "sglang":
 	default:
-		return errors.New("runtime.backend must be deepseek, sglang, or anthropic")
+		return errors.New("runtime.backend must be deepseek, sglang, anthropic, or gemini")
 	}
 	switch c.Mode {
 	case "external":

@@ -74,7 +74,7 @@ func TestExplicitCompositionSwitches(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	for _, value := range []string{`case "terminalbench2"`, `case "openclaw"`, `case "hermes"`, `case "docker"`, `case "sandlock"`, `case "openclaw-ssh"`, `case "hermes-ssh"`, `case "deepseek"`, `case "sglang"`} {
+	for _, value := range []string{`case "terminalbench2"`, `case "openclaw"`, `case "hermes"`, `case "docker"`, `case "sandlock"`, `case "openclaw-ssh"`, `case "hermes-ssh"`, `case "deepseek"`, `case "sglang"`, `case "gemini"`} {
 		if !strings.Contains(text, value) {
 			t.Fatalf("missing explicit switch %s", value)
 		}
@@ -174,6 +174,24 @@ func TestExternalSGLangPreparationReturnsNilRuntime(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "absent")); !os.IsNotExist(err) {
 		t.Fatalf("preparation created output: %v", err)
+	}
+}
+
+func TestPrepareBackendAcceptsExternalGemini(t *testing.T) {
+	cfg := config.Config{
+		Runtime: config.RuntimeConfig{Backend: "gemini", Mode: "external"},
+		Model:   config.ProfileModel{ID: "gemini-2.5-flash", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKeyEnv: "GEMINI_API_KEY"},
+	}
+	prepared, err := prepareBackend(cfg, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Runtime != nil || prepared.Model.Provider != "gemini" || prepared.Model.Model != "gemini-2.5-flash" {
+		t.Fatalf("prepared=%#v", prepared)
+	}
+	cfg.Runtime.Mode = "managed"
+	if _, err := prepareBackend(cfg, t.TempDir()); err == nil || !strings.Contains(err.Error(), "Gemini runtime must be external") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

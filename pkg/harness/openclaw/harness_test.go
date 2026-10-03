@@ -796,6 +796,29 @@ func TestAgentRunRejectsMissingWriteScopeBeforeSubmission(t *testing.T) {
 	}
 }
 
+func TestGatewayURLUsesLoopbackWhenNetworkIsHost(t *testing.T) {
+	fake := newFakeDocker()
+	fake.container = container.InspectResponse{
+		ID:         "id",
+		HostConfig: &container.HostConfig{NetworkMode: "host"},
+	}
+	manager := newTestManager(t, fake, []byte("model-secret"))
+	got, err := manager.gatewayURL(context.Background(), &session{containerID: "id"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "ws://127.0.0.1:18789" {
+		t.Fatalf("gateway URL = %s", got)
+	}
+	script := string(gatewayProxyScript(gatewayListenHost("host")))
+	if !strings.Contains(script, `const listenHost = "127.0.0.1";`) {
+		t.Fatalf("proxy script = %s", script)
+	}
+	if gatewayListenHost("aries-net") != "0.0.0.0" {
+		t.Fatal("bridge network must keep the published proxy bind")
+	}
+}
+
 func TestGatewayURLRejectsMissingDuplicateWildcardAndInvalidBindings(t *testing.T) {
 	for name, bindings := range map[string][]network.PortBinding{
 		"missing":   nil,

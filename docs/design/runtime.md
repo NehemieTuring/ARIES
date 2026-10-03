@@ -27,7 +27,9 @@ flowchart TB
     E --> H
 ```
 
-DeepSeek is supported only as an external OpenAI-compatible endpoint. ARIES
+DeepSeek and Gemini are supported only as external OpenAI-compatible endpoints.
+Gemini uses `https://generativelanguage.googleapis.com/v1beta/openai` and the
+`GEMINI_API_KEY` environment variable. ARIES
 performs bounded model validation but does not own the remote service. SGLang
 may also be external, or ARIES may manage one host process across a profile run.
 Managed SGLang uses a native YAML file, explicit executable and timeouts, and

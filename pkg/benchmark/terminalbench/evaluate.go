@@ -108,10 +108,10 @@ func (b *Benchmark) Evaluate(ctx context.Context, task core.Task, sandbox runner
 		artifactErrors = append(artifactErrors, fmt.Errorf("write verifier stderr: %w", err))
 	}
 	if err := sandbox.Download(ctx, filepath.Join(verifierLogPath, "ctrf.json"), ctrfPath); err != nil {
-		artifactErrors = append(artifactErrors, fmt.Errorf("download verifier CTRF: %w", err))
+		artifactErrors = append(artifactErrors, verifierArtifactError("CTRF", filepath.Join(verifierLogPath, "ctrf.json"), "download verifier CTRF", err))
 	}
 	if err := sandbox.Download(ctx, filepath.Join(verifierLogPath, "reward.txt"), rewardPath); err != nil {
-		artifactErrors = append(artifactErrors, fmt.Errorf("download verifier reward: %w", err))
+		artifactErrors = append(artifactErrors, verifierArtifactError("reward", filepath.Join(verifierLogPath, "reward.txt"), "download verifier reward", err))
 	}
 
 	if commandErr != nil {
@@ -139,6 +139,24 @@ func (b *Benchmark) Evaluate(ctx context.Context, task core.Task, sandbox runner
 		return finish(nil)
 	}
 	return finish(nil)
+}
+
+func verifierArtifactError(kind, containerPath, downloadLabel string, err error) error {
+	if missingVerifierArtifact(err) {
+		return fmt.Errorf("verifier did not produce %s at %s before tests could be reported: %s: %w", kind, containerPath, downloadLabel, err)
+	}
+	return fmt.Errorf("%s: %w", downloadLabel, err)
+}
+
+func missingVerifierArtifact(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "no such file") || strings.Contains(text, "not found") || strings.Contains(text, "could not find")
 }
 
 func parseRewardFile(path string) (float64, error) {

@@ -90,7 +90,20 @@ func taskPolicy(root, workdir string, environment core.Environment, configured O
 		mounts["/dev"] = "/dev"
 		readable = append(readable, "/dev")
 	}
-	writable := []string{workdir, "/tmp", "/logs", "/tests"}
+	// The copied image is the task filesystem. Verifiers read reference
+	// files outside the workdir, such as /app/resources. Denied paths below
+	// stay unreadable.
+	readable = append(readable, "/")
+	// /usr, /var, and /etc stay writable so a verifier can keep package state.
+	// /etc/shadow remains denied below. Cache directories are separate from the
+	// task workdir: 82 of the pinned verifiers install uv, and several call
+	// pip. Those tools create nested cache directories while the script runs.
+	writable := []string{
+		workdir, "/tmp",
+		"/tmp/uv-cache", "/tmp/uv-python", "/tmp/uv-tools", "/tmp/uv-tool-bin",
+		"/tmp/xdg-cache", "/tmp/xdg-config", "/tmp/pip-cache",
+		"/logs", "/logs/verifier", "/tests", "/usr", "/var", "/etc",
+	}
 	denied := []string{"/proc/kcore", "/etc/shadow", "/root", "/home"}
 	denied = append(denied, configured.FSDenied...)
 	netAllow := configured.NetAllow
@@ -142,11 +155,31 @@ func taskPolicy(root, workdir string, environment core.Environment, configured O
 
 func taskEnvironment(values map[string]string, workdir string) map[string]string {
 	env := map[string]string{
-		"PATH":            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"PATH":            workdir + "/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME":            workdir,
 		"TMPDIR":          "/tmp",
 		"LANG":            "C.UTF-8",
+		"SHELL":           "/bin/sh",
 		"DEBIAN_FRONTEND": "noninteractive",
+		// Terminal-Bench verifiers install uv 0.9.5 and, less often, pip
+		// packages. The caches stay under /tmp, which the task can write,
+		// instead of a root-owned directory in the image. PIP_USER lets
+		// pip install without mapping uid 0. The host home directory is
+		// not copied into any of these values.
+		"UV_CACHE_DIR":          "/tmp/uv-cache",
+		"UV_PYTHON_INSTALL_DIR": "/tmp/uv-python",
+		"UV_TOOL_DIR":           "/tmp/uv-tools",
+		"UV_TOOL_BIN_DIR":       "/tmp/uv-tool-bin",
+		"XDG_CACHE_HOME":        "/tmp/xdg-cache",
+		"XDG_CONFIG_HOME":       "/tmp/xdg-config",
+		"UV_NO_CONFIG":          "1",
+		"PIP_CACHE_DIR":         "/tmp/pip-cache",
+		"PIP_USER":              "1",
+		"PYTHONUSERBASE":        workdir + "/.local",
+		// Sandlock reports ENOENT for readlink of a non-symlink. glibc
+		// realpath then refuses the path, so uv cannot install Python.
+		// The helper restores EINVAL for ordinary files and directories.
+		"LD_PRELOAD": realpathCompatPath,
 	}
 	if tz := os.Getenv("TZ"); tz != "" {
 		env["TZ"] = tz

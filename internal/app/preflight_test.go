@@ -344,6 +344,27 @@ func TestOfficialDeepSeekSelectionIsExact(t *testing.T) {
 	}
 }
 
+func TestGeminiPreflightConfirmsOfficialModel(t *testing.T) {
+	model := core.ModelConfig{Provider: "gemini", BaseURL: geminiBaseURL, Model: "gemini-2.5-flash", APIKeyEnv: "GEMINI_API_KEY"}
+	doer := &sglangPreflightDoer{t: t, wantURL: geminiModelsURL, status: http.StatusOK, body: `{"data":[{"id":"gemini-2.5-flash"}]}`}
+	validation, err := validateLiveModel(context.Background(), model, func(string) ([]byte, bool) { return []byte("key-canary"), true }, doer, nil)
+	if err != nil || validation.Status != liveValidationSucceeded || validation.Category != liveValidationConfirmed || validation.Attempts != 1 || doer.authorization != "Bearer key-canary" {
+		t.Fatalf("validation=%+v error=%v authorization=%q", validation, err, doer.authorization)
+	}
+	unofficial := model
+	unofficial.BaseURL = geminiBaseURL + "/"
+	validation, err = validateLiveModel(context.Background(), unofficial, func(string) ([]byte, bool) { return []byte("key-canary"), true }, doer, nil)
+	assertPreflightFailure(t, validation, err, liveValidationConfigurationInvalid, 0)
+	prefixed := &sglangPreflightDoer{t: t, wantURL: geminiModelsURL, status: http.StatusOK, body: `{"data":[{"id":"models/gemini-2.5-flash"}]}`}
+	validation, err = validateLiveModel(context.Background(), model, func(string) ([]byte, bool) { return []byte("key-canary"), true }, prefixed, nil)
+	if err != nil || validation.Status != liveValidationSucceeded || validation.Model != "gemini-2.5-flash" {
+		t.Fatalf("prefixed validation=%+v error=%v", validation, err)
+	}
+	missing := &sglangPreflightDoer{t: t, wantURL: geminiModelsURL, status: http.StatusOK, body: `{"data":[{"id":"other"}]}`}
+	validation, err = validateLiveModel(context.Background(), model, func(string) ([]byte, bool) { return []byte("key-canary"), true }, missing, nil)
+	assertPreflightFailure(t, validation, err, liveValidationModelMissing, 1)
+}
+
 func TestSGLangPreflightFailsClosedWithSanitizedCategories(t *testing.T) {
 	model := core.ModelConfig{Provider: "sglang", BaseURL: "http://fake.invalid/v1", Model: "local", APIKeyEnv: "SGLANG_API_KEY"}
 	for _, test := range []struct {

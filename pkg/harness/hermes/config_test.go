@@ -39,6 +39,30 @@ func TestRenderConfigReferencesCredentialByName(t *testing.T) {
 	}
 }
 
+func TestRenderConfigAcceptsGemini(t *testing.T) {
+	model := validModel()
+	model.Provider = "gemini"
+	model.BaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
+	model.Model = "gemini-2.5-flash"
+	model.APIKeyEnv = "GEMINI_API_KEY"
+	rendered, err := renderConfig(model, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(rendered)
+	for _, want := range []string{
+		`provider: "gemini"`,
+		`default: "gemini-2.5-flash"`,
+		`base_url: "https://generativelanguage.googleapis.com/v1beta/openai"`,
+		`api_key: "${GEMINI_API_KEY}"`,
+		`api_mode: "chat_completions"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %s in\n%s", want, text)
+		}
+	}
+}
+
 func TestRenderConfigNormalizesSGLangAndRejectsBadInput(t *testing.T) {
 	model := validModel()
 	model.Provider = "sglang"

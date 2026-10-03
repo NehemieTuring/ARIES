@@ -125,8 +125,8 @@ exec hermes --ignore-rules --yolo --model "$1" --provider "$2" -z "$3"
 }
 
 func validateModel(model core.ModelConfig) error {
-	if model.Provider != "deepseek" && model.Provider != "sglang" {
-		return errors.New("Hermes model provider must be deepseek or sglang")
+	if model.Provider != "deepseek" && model.Provider != "sglang" && model.Provider != "gemini" {
+		return errors.New("Hermes model provider must be deepseek, sglang, or gemini")
 	}
 	if model.Provider == "sglang" {
 		if _, err := normalizeSGLangBaseURL(model.BaseURL); err != nil {

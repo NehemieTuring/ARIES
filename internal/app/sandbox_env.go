@@ -24,7 +24,7 @@ func selectSandboxType(cfg config.Config, executablePath string) (config.Config,
 		cfg.Sandbox.Type = value
 		return cfg, nil
 	}
-	value, found, err := sandboxTypeFromDotEnv(executablePath)
+	value, found, err := dotenvValue(executablePath, sandboxTypeEnv)
 	if err != nil {
 		return cfg, err
 	}
@@ -46,7 +46,7 @@ func sandboxTypeFromEnvironment() (string, bool, error) {
 	return value, true, nil
 }
 
-func sandboxTypeFromDotEnv(executablePath string) (string, bool, error) {
+func dotenvValue(executablePath, name string) (string, bool, error) {
 	keyPath, anchored := repositoryAPIKeyPath(executablePath)
 	if !anchored {
 		return "", false, nil
@@ -61,7 +61,7 @@ func sandboxTypeFromDotEnv(executablePath string) (string, bool, error) {
 	found := false
 	value := ""
 	for _, line := range strings.Split(string(content), "\n") {
-		parsed, ok, err := sandboxTypeLine(line)
+		parsed, ok, err := dotenvLine(line, name)
 		if err != nil {
 			return "", false, err
 		}
@@ -74,22 +74,22 @@ func sandboxTypeFromDotEnv(executablePath string) (string, bool, error) {
 	return value, found, nil
 }
 
-func sandboxTypeLine(line string) (string, bool, error) {
+func dotenvLine(line, want string) (string, bool, error) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
 		return "", false, nil
 	}
 	line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
 	name, raw, ok := strings.Cut(line, "=")
-	if !ok || strings.TrimSpace(name) != sandboxTypeEnv {
+	if !ok || strings.TrimSpace(name) != want {
 		return "", false, nil
 	}
 	value, err := unquoteEnvValue(raw)
 	if err != nil {
-		return "", false, fmt.Errorf("parse .env %s: %w", sandboxTypeEnv, err)
+		return "", false, fmt.Errorf("parse .env %s: %w", want, err)
 	}
 	if value == "" {
-		return "", false, fmt.Errorf(".env %s is empty", sandboxTypeEnv)
+		return "", false, fmt.Errorf(".env %s is empty", want)
 	}
 	return value, true, nil
 }

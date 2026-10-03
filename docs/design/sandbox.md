@@ -27,17 +27,46 @@ container. Each command is a host process confined with Landlock, seccomp-bpf,
 seccomp user notification, a filesystem policy, a network allowlist, and
 copy-on-write on the task workdir. Those controls are not cgroups or namespaces. The private directory is written
 directly. Sandlock's copy-on-write branch is not used, because creates in that
-branch are not visible to later lookups in the same command.
+branch are not visible to later lookups in the same command. `/usr`, `/var`,
+and `/etc` are writable so a verifier can keep package state. The copied image
+is readable, so a verifier can open reference files outside the workdir.
+`/etc/shadow`, `/root`, and `/home` stay denied. The task process keeps the invoking user's
+uid: this host's AppArmor profile for unconfined programs denies the
+`sys_admin` capability required to map uid 0. `SHELL` is `/bin/sh` so an
+installer that cannot read `/proc/self/exe` can still see an ELF binary. A
+command is reaped when its process exits, even if the caller has not closed
+standard input. Sandlock allows one live process for a sandbox name, so holding
+that name until stdin closes makes every later command fail with `popen failed`.
+
+Terminal-Bench still runs each task's own `/tests/test.sh`. Across the pinned
+set of 89 scripts, 82 install uv 0.9.5 with curl and all 89 write
+`/logs/verifier/reward.txt`. Sandlock keeps those scripts unchanged. It points
+`UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `UV_TOOL_DIR`, `XDG_CACHE_HOME`,
+and `PIP_CACHE_DIR` at directories under `/tmp`, sets `UV_NO_CONFIG=1` so
+uv does not walk parent directories outside the task, puts
+`PIP_USER=1` so pip does not need uid 0, and adds the task-local
+`~/.local/bin` to `PATH`. Task-specific `apt-get install` of packages other
+than what the image or the seed helper already contains still needs container
+root and stays unsupported. `/home`, `/root`, and `/etc/shadow` stay denied.
 
 Sandlock prepares a private directory and, in production, copies the task image
-root filesystem into it with a helper container that is never started. Execution
-then uses Sandlock only. The helper exists because Terminal-Bench task files
-and the dynamic linker live in the image; it is not the sandbox. Sandlock
-resolves `/bin`, `/usr`, `/lib`, `/lib64`, `/etc`, and `/proc` inside that
-private root. `/dev` is the one host directory mapped into the chroot, because
-tools need device nodes such as `/dev/null` and those nodes cannot be copied.
-`/home`, `/root`, and `/etc/shadow` are denied. The rest of the host filesystem
-is not mounted into the task.
+root filesystem into it with a helper container. That helper starts only to
+install `curl` and the uv 0.9.5 binaries the verifier expects under the
+task workdir when they are missing, then it is removed. Execution uses Sandlock only. The helper exists
+because Terminal-Bench task files, the dynamic linker, and the verifier's
+download tool live in the image; it is not the sandbox. Sandlock
+resolves `/bin`, `/usr`, `/lib`, `/lib64`, and `/etc` inside that
+private root. `/dev` is mapped from the host because tools need device nodes
+such as `/dev/null` and those nodes cannot be copied. `/proc` stays the
+copied image directory. Sandlock answers `readlink` of a non-symlink with
+`ENOENT`, which makes glibc `realpath` fail, so each task loads
+`/usr/lib/libaries-realpath.so` through `LD_PRELOAD`. That helper returns
+`EINVAL` for ordinary files and directories and leaves real symlinks to
+Sandlock. It also turns `mkdir` of a missing parent from `EACCES` into
+`ENOENT`, which is what `create_dir_all` needs before it creates the rest
+of a uv cache tree. The same helper runs a script by its shebang
+interpreter, because Sandlock refuses to execute the script file itself. `/home`, `/root`, and `/etc/shadow` are denied. The rest of the
+host filesystem is not mounted into the task.
 
 `AllowNetwork: false` becomes an empty Sandlock allowlist, which denies
 outbound traffic. `AllowNetwork: true` uses `*` only because Docker's

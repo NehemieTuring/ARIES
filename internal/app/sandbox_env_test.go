@@ -61,6 +61,24 @@ func TestProcessEnvironmentWinsOverDotEnv(t *testing.T) {
 	}
 }
 
+func TestDotEnvAPIKeyIsUsedOnlyWhenTheProcessEnvironmentIsUnset(t *testing.T) {
+	const name = "GEMINI_API_KEY"
+	unsetEnv(t, name)
+	root, exe := createTestAriesRepository(t)
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("export GEMINI_API_KEY=\"dotenv-canary\"\nexport ARIES_SANDBOX_TYPE=\"docker\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	value, found, err := dotenvValue(exe, name)
+	if err != nil || !found || value != "dotenv-canary" {
+		t.Fatalf("value=%q found=%t err=%v", value, found, err)
+	}
+	t.Setenv(name, "process-canary")
+	got, ok := environmentAPIKeyLookup(name)
+	if !ok || string(got) != "process-canary" {
+		t.Fatalf("lookup = %q ok=%t", got, ok)
+	}
+}
+
 func TestCommentedDotEnvSandboxTypeKeepsProfile(t *testing.T) {
 	unsetSandboxEnv(t)
 	root, exe := createTestAriesRepository(t)
@@ -99,15 +117,20 @@ func sandboxTypeSeenByValidator(t *testing.T, executablePath string) (string, er
 
 func unsetSandboxEnv(t *testing.T) {
 	t.Helper()
-	previous, existed := os.LookupEnv(sandboxTypeEnv)
-	if err := os.Unsetenv(sandboxTypeEnv); err != nil {
+	unsetEnv(t, sandboxTypeEnv)
+}
+
+func unsetEnv(t *testing.T, name string) {
+	t.Helper()
+	previous, existed := os.LookupEnv(name)
+	if err := os.Unsetenv(name); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if existed {
-			_ = os.Setenv(sandboxTypeEnv, previous)
+			_ = os.Setenv(name, previous)
 			return
 		}
-		_ = os.Unsetenv(sandboxTypeEnv)
+		_ = os.Unsetenv(name)
 	})
 }

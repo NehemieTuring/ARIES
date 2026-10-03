@@ -100,10 +100,14 @@ ARIES owns a model-server process. The supported combinations are:
 | Backend | Mode | `runtime.config` | Process owner |
 | --- | --- | --- | --- |
 | `deepseek` | `external` | Must be omitted | DeepSeek |
+| `gemini` | `external` | Must be omitted | Gemini |
 | `sglang` | `external` | `file` only | User |
 | `sglang` | `managed` | `file`, `executable`, `startup_timeout`, `stop_timeout` | ARIES |
 
-DeepSeek cannot use managed mode. SGLang supports both modes.
+DeepSeek and Gemini cannot use managed mode. SGLang supports both modes.
+Gemini profiles are `profiles/openclaw-tb2-fix-git-gemini.json` and
+`profiles/hermes-tb2-fix-git-gemini.json`. Set `GEMINI_API_KEY` before a run.
+The model endpoint is `https://generativelanguage.googleapis.com/v1beta/openai`.
 
 ### External DeepSeek
 

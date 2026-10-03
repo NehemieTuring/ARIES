@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hyscale-lab/aries/pkg/core"
@@ -180,10 +181,70 @@ func (m *Manager) Start(ctx context.Context, request core.SandboxRequest) (runne
 		_ = os.RemoveAll(root)
 		return nil, fmt.Errorf("prepare sandlock workspace: %w", err)
 	}
+	if err := prepareRuntimeDirectories(root, request.Environment.Workdir); err != nil {
+		_ = os.RemoveAll(root)
+		return nil, err
+	}
 	m.logger.WithContext(ctx).WithFields(logrus.Fields{
 		"sandbox": sandbox.name, "backend": "sandlock", "workdir": sandbox.workdir,
 	}).Info("sandlock task sandbox started")
 	return sandbox, nil
+}
+
+// prepareRuntimeDirectories creates the writable locations Terminal-Bench
+// verifier scripts use for caches, logs, and user-level tool installs. The
+// directories live in the private root. They are not host paths.
+func prepareRuntimeDirectories(root, workdir string) error {
+	paths := []string{
+		"/tmp", "/tmp/uv-cache", "/tmp/uv-python", "/tmp/uv-tools", "/tmp/uv-tool-bin",
+		"/tmp/xdg-cache", "/tmp/xdg-config", "/tmp/pip-cache",
+		"/logs", "/logs/verifier", "/tests",
+	}
+	if workdir != "" && workdir != "/" {
+		paths = append(paths, workdir, workdir+"/.local", workdir+"/.local/bin")
+	}
+	for _, containerPath := range paths {
+		host, err := hostPath(root, containerPath)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(host, 0o777); err != nil {
+			return fmt.Errorf("create sandlock runtime path %s: %w", containerPath, err)
+		}
+		if err := os.Chmod(host, 0o777); err != nil {
+			return fmt.Errorf("open sandlock runtime path %s: %w", containerPath, err)
+		}
+	}
+	if workdir != "" && workdir != "/" {
+		host, err := hostPath(root, workdir)
+		if err != nil {
+			return err
+		}
+		if err := chmodOwnedDirectories(host); err != nil {
+			return err
+		}
+	}
+	return installRealpathCompat(root)
+}
+
+// chmodOwnedDirectories opens directories the invoking user already owns.
+// Image seeds can leave tool state, such as uv's Python directory, mode 0700
+// under another uid; those stay unchanged rather than taking host privileges.
+func chmodOwnedDirectories(root string) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || !entry.IsDir() {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || int(stat.Uid) != os.Getuid() {
+			return nil
+		}
+		return os.Chmod(path, 0o777)
+	})
 }
 
 // Stop terminates leftover processes and removes the workspace. A second call

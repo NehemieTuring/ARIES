@@ -1,0 +1,453 @@
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+/* Sandlock answers readlink on a non-symlink with ENOENT. glibc realpath
+   treats only EINVAL as "not a symlink" and otherwise aborts the walk, so
+   uv cannot canonicalize a directory that stat can see. */
+static int plain_file(int fd, const char *path) {
+	struct stat st;
+	if (path == NULL || path[0] == '\0') {
+		return 0;
+	}
+	if (path[0] == '/') {
+		if (lstat(path, &st) != 0) {
+			return 0;
+		}
+	} else if (fstatat(fd, path, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+		return 0;
+	}
+	return !S_ISLNK(st.st_mode);
+}
+
+ssize_t readlink(const char *path, char *buf, size_t size) {
+	if (plain_file(AT_FDCWD, path)) {
+		errno = EINVAL;
+		return -1;
+	}
+	ssize_t (*next)(const char *, char *, size_t);
+	next = dlsym(RTLD_NEXT, "readlink");
+	if (next == NULL) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return next(path, buf, size);
+}
+
+ssize_t readlinkat(int fd, const char *path, char *buf, size_t size) {
+	if (plain_file(fd, path)) {
+		errno = EINVAL;
+		return -1;
+	}
+	ssize_t (*next)(int, const char *, char *, size_t);
+	next = dlsym(RTLD_NEXT, "readlinkat");
+	if (next == NULL) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return next(fd, path, buf, size);
+}
+
+/* libc realpath calls an internal readlink, so interposing readlink is not
+   enough for a caller such as uv. Walk with lstat, which Sandlock allows. */
+static char *finish_realpath(const char *out, char *resolved) {
+	size_t len = strlen(out);
+	if (resolved == NULL) {
+		char *copy = malloc(len + 1);
+		if (copy == NULL) {
+			errno = ENOMEM;
+			return NULL;
+		}
+		memcpy(copy, out, len + 1);
+		return copy;
+	}
+	if (len >= PATH_MAX) {
+		errno = ENAMETOOLONG;
+		return NULL;
+	}
+	memcpy(resolved, out, len + 1);
+	return resolved;
+}
+
+char *realpath(const char *name, char *resolved) {
+	if (name == NULL || name[0] == '\0') {
+		errno = EINVAL;
+		return NULL;
+	}
+	char pending[PATH_MAX];
+	char out[PATH_MAX];
+	if (name[0] == '/') {
+		if (strlen(name) >= sizeof pending) {
+			errno = ENAMETOOLONG;
+			return NULL;
+		}
+		memcpy(pending, name, strlen(name) + 1);
+		out[0] = '/';
+		out[1] = '\0';
+	} else {
+		if (getcwd(out, sizeof out) == NULL) {
+			return NULL;
+		}
+		if (strlen(out) + 1 + strlen(name) >= sizeof pending) {
+			errno = ENAMETOOLONG;
+			return NULL;
+		}
+		snprintf(pending, sizeof pending, "%s/%s", out, name);
+		out[0] = '/';
+		out[1] = '\0';
+	}
+	int hops = 0;
+	char *cursor = pending;
+	while (*cursor != '\0') {
+		while (*cursor == '/') {
+			cursor++;
+		}
+		if (*cursor == '\0') {
+			break;
+		}
+		char *slash = strchr(cursor, '/');
+		size_t n = slash == NULL ? strlen(cursor) : (size_t)(slash - cursor);
+		if (n == 1 && cursor[0] == '.') {
+			cursor += n;
+			continue;
+		}
+		if (n == 2 && cursor[0] == '.' && cursor[1] == '.') {
+			char *last = strrchr(out, '/');
+			if (last != NULL && last != out) {
+				*last = '\0';
+			} else {
+				out[1] = '\0';
+			}
+			cursor += n;
+			continue;
+		}
+		size_t len = strlen(out);
+		if (len + 1 + n >= sizeof out) {
+			errno = ENAMETOOLONG;
+			return NULL;
+		}
+		if (len > 1) {
+			out[len++] = '/';
+		}
+		memcpy(out + len, cursor, n);
+		out[len + n] = '\0';
+		cursor += n;
+		struct stat st;
+		if (lstat(out, &st) != 0) {
+			return NULL;
+		}
+		if (!S_ISLNK(st.st_mode)) {
+			continue;
+		}
+		if (++hops > 40) {
+			errno = ELOOP;
+			return NULL;
+		}
+		char target[PATH_MAX];
+		ssize_t got = readlink(out, target, sizeof target - 1);
+		if (got < 0) {
+			return NULL;
+		}
+		target[got] = '\0';
+		char rest[PATH_MAX];
+		snprintf(rest, sizeof rest, "%s", cursor);
+		if (target[0] == '/') {
+			snprintf(pending, sizeof pending, "%s%s%s", target, rest[0] == '\0' ? "" : "/", rest);
+		} else {
+			char *last = strrchr(out, '/');
+			if (last != NULL && last != out) {
+				*last = '\0';
+			} else {
+				out[1] = '\0';
+			}
+			snprintf(pending, sizeof pending, "%s/%s%s%s", out, target, rest[0] == '\0' ? "" : "/", rest);
+			out[0] = '/';
+			out[1] = '\0';
+		}
+		cursor = pending;
+		out[0] = '/';
+		out[1] = '\0';
+	}
+	if (out[0] == '\0') {
+		out[0] = '/';
+		out[1] = '\0';
+	}
+	return finish_realpath(out, resolved);
+}
+
+/* Sandlock's mkdir returns EACCES when an intermediate directory does not
+   exist. Rust create_dir_all only walks parents after ENOENT, so uv stops
+   instead of creating the cache tree. If a parent prefix is missing, report
+   ENOENT and leave a real permission error unchanged. */
+static int mkdir_parent_missing(const char *path) {
+	if (path == NULL || path[0] != '/') {
+		return 0;
+	}
+	size_t n = strlen(path);
+	if (n >= PATH_MAX) {
+		return 0;
+	}
+	char buf[PATH_MAX];
+	memcpy(buf, path, n + 1);
+	char *last = strrchr(buf, '/');
+	if (last == NULL || last == buf) {
+		return 0;
+	}
+	*last = '\0';
+	char *cursor = buf + 1;
+	while (*cursor != '\0') {
+		char *slash = strchr(cursor, '/');
+		if (slash != NULL) {
+			*slash = '\0';
+		}
+		struct stat st;
+		int rc = lstat(buf, &st);
+		int err = errno;
+		if (slash != NULL) {
+			*slash = '/';
+		}
+		if (rc != 0) {
+			return err == ENOENT;
+		}
+		if (slash == NULL) {
+			break;
+		}
+		cursor = slash + 1;
+	}
+	return 0;
+}
+
+static int fix_mkdir_errno(int rc, const char *path) {
+	if (rc == 0 || errno != EACCES || !mkdir_parent_missing(path)) {
+		return rc;
+	}
+	errno = ENOENT;
+	return rc;
+}
+
+int mkdir(const char *path, mode_t mode) {
+	int (*next)(const char *, mode_t);
+	next = dlsym(RTLD_NEXT, "mkdir");
+	if (next == NULL) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return fix_mkdir_errno(next(path, mode), path);
+}
+
+int mkdirat(int fd, const char *path, mode_t mode) {
+	int (*next)(int, const char *, mode_t);
+	next = dlsym(RTLD_NEXT, "mkdirat");
+	if (next == NULL) {
+		errno = ENOSYS;
+		return -1;
+	}
+	(void)fd;
+	return fix_mkdir_errno(next(fd, path, mode), path);
+}
+
+extern char **environ;
+
+/* Sandlock can execute an ELF image, and returns EACCES for a script. uvx
+   launches pytest through a shell script, so run the shebang interpreter
+   instead and let that program read the script. */
+static int script_interpreter(const char *path, char *interp, size_t interp_len, char *extra, size_t extra_len, int *has_extra) {
+	*has_extra = 0;
+	if (path == NULL || path[0] == '\0') {
+		return 0;
+	}
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0) {
+		return 0;
+	}
+	char buf[256];
+	ssize_t n = read(fd, buf, sizeof buf - 1);
+	close(fd);
+	if (n < 4 || buf[0] != '#' || buf[1] != '!') {
+		return 0;
+	}
+	buf[n] = '\0';
+	char *cursor = buf + 2;
+	while (*cursor == ' ' || *cursor == '\t') {
+		cursor++;
+	}
+	char *end = cursor;
+	while (*end != '\0' && *end != ' ' && *end != '\t' && *end != '\n' && *end != '\r') {
+		end++;
+	}
+	size_t len = (size_t)(end - cursor);
+	if (len == 0 || len >= interp_len) {
+		return 0;
+	}
+	memcpy(interp, cursor, len);
+	interp[len] = '\0';
+	while (*end == ' ' || *end == '\t') {
+		end++;
+	}
+	char *arg_end = end;
+	while (*arg_end != '\0' && *arg_end != ' ' && *arg_end != '\t' && *arg_end != '\n' && *arg_end != '\r') {
+		arg_end++;
+	}
+	size_t arg_len = (size_t)(arg_end - end);
+	if (arg_len > 0 && arg_len < extra_len) {
+		memcpy(extra, end, arg_len);
+		extra[arg_len] = '\0';
+		*has_extra = 1;
+	}
+	return 1;
+}
+
+static char **script_argv(const char *interp, int has_extra, const char *extra, const char *path, char *const argv[]) {
+	int argc = 0;
+	while (argv != NULL && argv[argc] != NULL) {
+		argc++;
+	}
+	char **next_argv = malloc((size_t)(argc + 3) * sizeof(char *));
+	if (next_argv == NULL) {
+		return NULL;
+	}
+	int i = 0;
+	next_argv[i++] = (char *)interp;
+	if (has_extra) {
+		next_argv[i++] = (char *)extra;
+	}
+	next_argv[i++] = (char *)path;
+	for (int j = 1; j < argc; j++) {
+		next_argv[i++] = argv[j];
+	}
+	next_argv[i] = NULL;
+	return next_argv;
+}
+
+static int exec_script(const char *path, char *const argv[], char *const envp[], int (*next)(const char *, char *const[], char *const[])) {
+	char interp[PATH_MAX];
+	char extra[PATH_MAX];
+	int has_extra = 0;
+	if (!script_interpreter(path, interp, sizeof interp, extra, sizeof extra, &has_extra)) {
+		return next(path, argv, envp);
+	}
+	char **next_argv = script_argv(interp, has_extra, extra, path, argv);
+	if (next_argv == NULL) {
+		errno = ENOMEM;
+		return -1;
+	}
+	int rc = next(interp, next_argv, envp);
+	free(next_argv);
+	return rc;
+}
+
+int execve(const char *path, char *const argv[], char *const envp[]) {
+	int (*next)(const char *, char *const[], char *const[]);
+	next = dlsym(RTLD_NEXT, "execve");
+	if (next == NULL) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return exec_script(path, argv, envp, next);
+}
+
+static int resolve_in_path(const char *file, char *out, size_t outlen);
+
+int execvp(const char *file, char *const argv[]) {
+	char resolved[PATH_MAX];
+	if (resolve_in_path(file, resolved, sizeof resolved) == 0) {
+		return execve(resolved, argv, environ);
+	}
+	int (*next)(const char *, char *const[]);
+	next = dlsym(RTLD_NEXT, "execvp");
+	if (next == NULL) {
+		errno = ENOSYS;
+		return -1;
+	}
+	return next(file, argv);
+}
+
+static int resolve_in_path(const char *file, char *out, size_t outlen) {
+	if (file == NULL || file[0] == '\0' || outlen == 0) {
+		return -1;
+	}
+	if (strchr(file, '/') != NULL) {
+		if (strlen(file) >= outlen) {
+			return -1;
+		}
+		memcpy(out, file, strlen(file) + 1);
+		return 0;
+	}
+	const char *path = getenv("PATH");
+	if (path == NULL || path[0] == '\0') {
+		path = "/usr/bin:/bin";
+	}
+	while (*path != '\0') {
+		const char *colon = strchr(path, ':');
+		size_t dirlen = colon == NULL ? strlen(path) : (size_t)(colon - path);
+		char candidate[PATH_MAX];
+		int fit = 0;
+		if (dirlen == 0) {
+			fit = snprintf(candidate, sizeof candidate, "%s", file) > 0;
+		} else if (dirlen + 1 + strlen(file) < sizeof candidate) {
+			memcpy(candidate, path, dirlen);
+			candidate[dirlen] = '/';
+			memcpy(candidate + dirlen + 1, file, strlen(file) + 1);
+			fit = 1;
+		}
+		if (fit) {
+			struct stat st;
+			if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & 0111) != 0) {
+				if (strlen(candidate) >= outlen) {
+					return -1;
+				}
+				memcpy(out, candidate, strlen(candidate) + 1);
+				return 0;
+			}
+		}
+		if (colon == NULL) {
+			break;
+		}
+		path = colon + 1;
+	}
+	return -1;
+}
+
+int posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const argv[], char *const envp[]) {
+	char resolved[PATH_MAX];
+	if (resolve_in_path(file, resolved, sizeof resolved) == 0) {
+		return posix_spawn(pid, resolved, file_actions, attrp, argv, envp);
+	}
+	int (*next)(pid_t *, const char *, const posix_spawn_file_actions_t *, const posix_spawnattr_t *, char *const[], char *const[]);
+	next = dlsym(RTLD_NEXT, "posix_spawnp");
+	if (next == NULL) {
+		return ENOSYS;
+	}
+	return next(pid, file, file_actions, attrp, argv, envp);
+}
+
+int posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const argv[], char *const envp[]) {
+	int (*next)(pid_t *, const char *, const posix_spawn_file_actions_t *, const posix_spawnattr_t *, char *const[], char *const[]);
+	next = dlsym(RTLD_NEXT, "posix_spawn");
+	if (next == NULL) {
+		errno = ENOSYS;
+		return ENOSYS;
+	}
+	char interp[PATH_MAX];
+	char extra[PATH_MAX];
+	int has_extra = 0;
+	if (!script_interpreter(path, interp, sizeof interp, extra, sizeof extra, &has_extra)) {
+		return next(pid, path, file_actions, attrp, argv, envp);
+	}
+	char **next_argv = script_argv(interp, has_extra, extra, path, argv);
+	if (next_argv == NULL) {
+		return ENOMEM;
+	}
+	int rc = next(pid, interp, file_actions, attrp, next_argv, envp);
+	free(next_argv);
+	return rc;
+}
+

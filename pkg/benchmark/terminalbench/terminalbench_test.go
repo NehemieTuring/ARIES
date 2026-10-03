@@ -1287,3 +1287,45 @@ func cloneBytesMap(source map[string][]byte) map[string][]byte {
 	}
 	return clone
 }
+
+func TestPinnedVerifierScriptsKeepTheirOwnRewardContract(t *testing.T) {
+	root := filepath.Join("..", "..", "..", ".cache", "terminal-bench-2")
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		t.Skip("pinned Terminal-Bench checkout is not present")
+	}
+	var scripts []string
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Base(path) != "test.sh" || filepath.Base(filepath.Dir(path)) != "tests" {
+			return nil
+		}
+		scripts = append(scripts, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scripts) != 89 {
+		t.Fatalf("verifier scripts = %d, want 89", len(scripts))
+	}
+	uv := 0
+	for _, path := range scripts {
+		text, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(text)
+		if !strings.Contains(body, "/logs/verifier/reward.txt") {
+			t.Fatalf("%s does not write reward.txt", path)
+		}
+		if strings.Contains(body, "uv/0.9.5") {
+			uv++
+		}
+	}
+	if uv != 82 {
+		t.Fatalf("uv 0.9.5 scripts = %d, want 82", uv)
+	}
+}

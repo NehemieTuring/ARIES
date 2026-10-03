@@ -157,8 +157,8 @@ func renderConfig(model core.ModelConfig, endpoint core.ToolEndpoint) ([]byte, e
 }
 
 func validateModel(model core.ModelConfig) error {
-	if model.Provider != "deepseek" && model.Provider != "sglang" {
-		return errors.New("OpenClaw model provider must be deepseek or sglang")
+	if model.Provider != "deepseek" && model.Provider != "sglang" && model.Provider != "gemini" {
+		return errors.New("OpenClaw model provider must be deepseek, sglang, or gemini")
 	}
 	if model.Provider == "sglang" {
 		if _, err := normalizeSGLangBaseURL(model.BaseURL); err != nil {

@@ -137,8 +137,11 @@ func (source *apiKeySource) Clear() {
 }
 
 func environmentAPIKeyLookup(name string) ([]byte, bool) {
-	value, ok := os.LookupEnv(name)
-	if !ok {
+	if value, ok := os.LookupEnv(name); ok {
+		return []byte(value), true
+	}
+	value, found, err := dotenvValue("", name)
+	if err != nil || !found {
 		return nil, false
 	}
 	return []byte(value), true

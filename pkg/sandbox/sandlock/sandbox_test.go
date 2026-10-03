@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,8 +37,18 @@ func TestTaskPolicyDeniesNetworkUnlessAllowed(t *testing.T) {
 	if len(denied.NetAllow) != 0 {
 		t.Fatalf("denied network = %#v", denied.NetAllow)
 	}
-	if !contains(denied.Readable, "/usr") || !contains(denied.Readable, "/bin") || !contains(denied.Writable, "/app") {
+	if !contains(denied.Readable, "/usr") || !contains(denied.Readable, "/bin") || !contains(denied.Readable, "/") || !contains(denied.Writable, "/app") {
 		t.Fatalf("policy = %#v", denied)
+	}
+	if !contains(denied.Writable, "/usr") || !contains(denied.Writable, "/var") || !contains(denied.Writable, "/etc") {
+		t.Fatalf("package paths = %#v", denied.Writable)
+	}
+	built := denied.sandbox()
+	if built.UID != nil || built.GID != nil {
+		t.Fatal("task commands stay the invoking user; this host cannot map uid 0")
+	}
+	if denied.Mounts["/dev"] != "/dev" || denied.Mounts["/proc"] != "" {
+		t.Fatalf("host mounts = %#v", denied.Mounts)
 	}
 	if !contains(denied.Denied, "/etc/shadow") || !contains(denied.Denied, "/home") {
 		t.Fatalf("denied paths = %#v", denied.Denied)
@@ -80,6 +92,12 @@ func TestTaskPolicyMapsResourcesWithoutClaimingCgroupParity(t *testing.T) {
 	if _, ok := policy.Env["DEBIAN_FRONTEND"]; !ok || policy.Env["HOME"] != "/app" {
 		t.Fatalf("env = %#v", policy.Env)
 	}
+	if policy.Env["UV_CACHE_DIR"] != "/tmp/uv-cache" || policy.Env["UV_PYTHON_INSTALL_DIR"] != "/tmp/uv-python" || policy.Env["UV_NO_CONFIG"] != "1" || policy.Env["PIP_USER"] != "1" || policy.Env["LD_PRELOAD"] != realpathCompatPath {
+		t.Fatalf("cache env = %#v", policy.Env)
+	}
+	if !contains(policy.Writable, "/tmp/uv-cache") || !contains(policy.Writable, "/logs/verifier") {
+		t.Fatalf("cache paths = %#v", policy.Writable)
+	}
 }
 
 func TestManagerRejectsInvalidBackendInputs(t *testing.T) {
@@ -90,6 +108,36 @@ func TestManagerRejectsInvalidBackendInputs(t *testing.T) {
 	_, err := manager.Start(context.Background(), core.SandboxRequest{RunID: "run", TaskID: "task", Environment: core.Environment{Image: "alpine:3", Workdir: "relative"}})
 	if err == nil {
 		t.Fatal("relative workdir")
+	}
+}
+
+func TestSandlockCanWritePackageDirectories(t *testing.T) {
+	sandbox := startSandbox(t, core.Environment{Image: "example.invalid/task:1", Workdir: "/app"})
+	for _, dir := range []string{"var/lib/apt/lists/partial", "usr/bin", "etc"} {
+		if err := os.MkdirAll(filepath.Join(sandbox.root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sandbox.root, "etc", "shadow"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := sandbox.Exec(context.Background(), core.Command{
+		Path: "/bin/sh",
+		Args: []string{"-c", "printf ok > /var/lib/apt/lists/partial/probe"},
+	})
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("package write = %+v, %v", result, err)
+	}
+	probe, err := os.ReadFile(filepath.Join(sandbox.root, "var/lib/apt/lists/partial/probe"))
+	if err != nil || string(probe) != "ok" {
+		t.Fatalf("probe = %q, %v", probe, err)
+	}
+	shadow, err := sandbox.Exec(context.Background(), core.Command{Path: "/bin/sh", Args: []string{"-c", "read line < /etc/shadow"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shadow.ExitCode == 0 || strings.Contains(shadow.Stdout, "secret") {
+		t.Fatalf("shadow readable = %+v", shadow)
 	}
 }
 
@@ -159,6 +207,27 @@ func TestSandlockFilesystemPolicy(t *testing.T) {
 	}
 	if isolated.ExitCode == 0 || strings.Contains(isolated.Stdout, "host") {
 		t.Fatalf("host file leaked = %+v", isolated)
+	}
+}
+
+func TestSandlockReadsReferenceOutsideWorkdir(t *testing.T) {
+	sandbox := startSandbox(t, core.Environment{Image: "example.invalid/task:1", Workdir: "/app/personal-site"})
+	if err := installHostExecutable(sandbox.root, "/bin/cat"); err != nil {
+		t.Fatal(err)
+	}
+	host, err := hostPath(sandbox.root, "/app/resources/patch_files/about.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(host), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(host, []byte("reference\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := sandbox.Exec(context.Background(), core.Command{Path: "/bin/cat", Args: []string{"/app/resources/patch_files/about.md"}})
+	if err != nil || result.ExitCode != 0 || result.Stdout != "reference\n" {
+		t.Fatalf("reference read = %+v, %v", result, err)
 	}
 }
 
@@ -232,12 +301,125 @@ func TestResourceSourceIdentifiesSandlock(t *testing.T) {
 	}
 }
 
+func TestRealpathSeesNewDirectory(t *testing.T) {
+	sandbox := startSandbox(t, core.Environment{Image: "example.invalid/task:1", Workdir: "/app"})
+	for _, executable := range []string{"/bin/mkdir", "/usr/bin/realpath", "/usr/bin/stat", "/usr/bin/readlink"} {
+		if err := installHostExecutable(sandbox.root, executable); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := sandbox.Exec(context.Background(), core.Command{
+		Path: "/bin/sh",
+		Args: []string{"-c", `set +e
+mkdir -p /app/.tmpprobe
+echo '--- readlink /app ---'
+readlink /app
+echo READLINK:$?
+echo '--- stat /app ---'
+stat /app >/dev/null
+echo STAT:$?
+echo '--- realpath /app ---'
+realpath /app
+echo REALPATH:$?
+echo '--- realpath probe ---'
+realpath /app/.tmpprobe
+echo PROBE:$?
+`},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("stdout=%s stderr=%s", result.Stdout, result.Stderr)
+	if result.ExitCode != 0 || !strings.Contains(result.Stdout, "REALPATH:0") || !strings.Contains(result.Stdout, "PROBE:0") {
+		t.Fatalf("realpath = %+v", result)
+	}
+}
+
+func TestSandlockCanCreateNestedDirectories(t *testing.T) {
+	sandbox := startSandbox(t, core.Environment{Image: "example.invalid/task:1", Workdir: "/app"})
+	if err := installHostExecutable(sandbox.root, "/bin/mkdir"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := sandbox.Exec(context.Background(), core.Command{
+		Path: "/bin/sh",
+		Args: []string{"-c", "mkdir -p /app/.cache/uv \"$UV_CACHE_DIR/child\" \"$UV_PYTHON_INSTALL_DIR/child\" && printf ok > \"$UV_PYTHON_INSTALL_DIR/child/probe\""},
+	})
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("nested create = %+v, %v", result, err)
+	}
+}
+
+func TestMkdirMissingParentIsNotFound(t *testing.T) {
+	sandbox := startSandbox(t, core.Environment{Image: "example.invalid/task:1", Workdir: "/app"})
+	if err := installHostExecutable(sandbox.root, "/bin/mkdir"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := sandbox.Exec(context.Background(), core.Command{
+		Path: "/bin/mkdir",
+		Args: []string{"/tmp/uv-cache/missing-parent/child"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode == 0 || !strings.Contains(result.Stderr, "No such file or directory") {
+		t.Fatalf("missing parent = %+v", result)
+	}
+}
+
+func TestSandlockCanExecScript(t *testing.T) {
+	sandbox := startSandbox(t, core.Environment{Image: "example.invalid/task:1", Workdir: "/app"})
+	host, err := hostPath(sandbox.root, "/tmp/hello.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(host, []byte("#!/bin/sh\necho script-ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := sandbox.Exec(context.Background(), core.Command{
+		Path: "/bin/sh",
+		Args: []string{"-c", "exec /tmp/hello.sh"},
+	})
+	if err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "script-ok") {
+		t.Fatalf("script = %+v, %v", result, err)
+	}
+}
+
 func TestExecStreamSeparatesOutput(t *testing.T) {
 	sandbox := startSandbox(t, core.Environment{Image: "example.invalid/task:1", Workdir: "/app"})
 	var stdout, stderr bytes.Buffer
 	result, err := sandbox.ExecStream(context.Background(), core.Command{Path: "/bin/sh", Args: []string{"-c", "IFS= read -r line; printf '%s\n' \"$line\"; echo err >&2"}}, strings.NewReader("in\n"), &stdout, &stderr)
 	if err != nil || result.ExitCode != 0 || stdout.String() != "in\n" || !strings.Contains(stderr.String(), "err") {
 		t.Fatalf("stream = %+v stdout %q stderr %q err %v", result, stdout.String(), stderr.String(), err)
+	}
+}
+
+func TestExecStreamReturnsWhileStdinStaysOpen(t *testing.T) {
+	sandbox := startSandbox(t, core.Environment{Image: "example.invalid/task:1", Workdir: "/app"})
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	var stdout bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		result, err := sandbox.ExecStream(context.Background(), core.Command{
+			Path: "/bin/sh", Args: []string{"-c", "printf 'done\\n'"},
+		}, reader, &stdout, io.Discard)
+		if err != nil || result.ExitCode != 0 || stdout.String() != "done\n" {
+			done <- fmt.Errorf("stream = %+v stdout %q err %v", result, stdout.String(), err)
+			return
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("exec stayed open after the process exited because stdin was still open")
+	}
+	next, err := sandbox.Exec(context.Background(), core.Command{Path: "/bin/sh", Args: []string{"-c", "printf next"}})
+	if err != nil || next.ExitCode != 0 || next.Stdout != "next" {
+		t.Fatalf("following command = %+v %v", next, err)
 	}
 }
 
