@@ -34,6 +34,7 @@ runs/
 .aries/
 DEEPSEEK_API.key
 /bin/
+go1.26.5.linux-amd64.tar.gz
 
 # Editor/IDE
 # .idea/
