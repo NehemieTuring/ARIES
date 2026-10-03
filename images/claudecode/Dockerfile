@@ -17,7 +17,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+ARG CLAUDE_CODE_VERSION=2.1.245
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+ENV DISABLE_AUTOUPDATER=1
 
 # Fixed, non-root UID/GID: Claude Code refuses --dangerously-skip-permissions
 # as root (rapport_integration_claude_code.md §7.3), and

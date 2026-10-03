@@ -2,6 +2,25 @@ package claudecodessh
 
 import "testing"
 
+func TestDecodeRemoteCommandKeepsSnapshotTextInsideAgentCommand(t *testing.T) {
+	script := `shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'grep -r SNAPSHOT_FILE= .' < /dev/null && pwd -P >| /tmp/claude-cwd`
+	got, err := decodeRemoteCommand([]string{"-c", script})
+	if err != nil || got.kind != kindAgent || got.script != "grep -r SNAPSHOT_FILE= ." {
+		t.Fatalf("decode = %#v, %v", got, err)
+	}
+}
+
+func TestDecodeRemoteCommandClassifiesSnapshotGenerator(t *testing.T) {
+	script := "SNAPSHOT_FILE=/home/aries/.claude/shell-snapshots/snapshot-bash-1.sh\n# Snapshot file\n"
+	got, err := decodeRemoteCommand([]string{"-c", "-l", script})
+	if err != nil || got.kind != kindBootstrap || got.script != "" {
+		t.Fatalf("decode = %#v, %v", got, err)
+	}
+	if _, err := decodeRemoteCommand([]string{"-c", script}); err == nil {
+		t.Fatal("snapshot text without -l was accepted")
+	}
+}
+
 // These three cases are the exact shapes observed in a real end-to-end run
 // (rapport_integration_claude_code.md §9.8), captured from tool-calls.jsonl/
 // ssh_raw.log after decodeEvalArgument rejected them — not hypothetical.

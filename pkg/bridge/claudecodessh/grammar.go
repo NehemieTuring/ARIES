@@ -3,6 +3,7 @@ package claudecodessh
 import (
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -89,11 +90,6 @@ var wrapperPattern = regexp.MustCompile(
 	`^(?:source .*? 2>/dev/null \|\| true && )?shopt -u extglob 2>/dev/null \|\| true && \{ \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; \} >/dev/null 2>&1 \|\| true && eval (.*) < /dev/null && pwd -P >\| .*$`,
 )
 
-// snapshotBootstrapPattern matches shape 2 (the once-per-session snapshot
-// generator). It is not further decoded — only classified — since it carries
-// no agent-chosen command, just Claude Code's own fixed scaffolding script.
-var snapshotBootstrapMarker = "# Snapshot file"
-
 type remoteCommand struct {
 	// script is the real, agent-chosen command (unquoted), populated only for
 	// kindAgent.
@@ -108,9 +104,9 @@ type remoteCommand struct {
 // rapport_integration_claude_code.md §7.6: caught by an end-to-end run
 // rejecting every real Bash tool call, all four retries hashing identical
 // because Claude Code was resending the same misclassified snapshot-generator
-// script). Classification therefore checks the bootstrap markers on the
-// resolved script FIRST, regardless of exactly which flags precede it, before
-// ever attempting the stricter per-call wrapperPattern match.
+// script). The per-call wrapper is matched first, so marker text inside an
+// agent command stays a journaled tool call. An unmatched script is bootstrap
+// only when argv includes -l and the script starts with SNAPSHOT_FILE=.
 func decodeRemoteCommand(argv []string) (remoteCommand, error) {
 	if len(argv) < 2 || argv[0] != "-c" {
 		return remoteCommand{}, errors.New("Claude Code exec command must invoke bash with -c")
@@ -119,11 +115,11 @@ func decodeRemoteCommand(argv []string) (remoteCommand, error) {
 	if script == "env" {
 		return remoteCommand{kind: kindBootstrap}, nil
 	}
-	if strings.Contains(script, snapshotBootstrapMarker) || strings.Contains(script, "SNAPSHOT_FILE=") {
-		return remoteCommand{kind: kindBootstrap}, nil
-	}
 	matches := wrapperPattern.FindStringSubmatch(script)
 	if matches == nil {
+		if slices.Contains(argv[:len(argv)-1], "-l") && strings.HasPrefix(strings.TrimSpace(script), "SNAPSHOT_FILE=") {
+			return remoteCommand{kind: kindBootstrap}, nil
+		}
 		return remoteCommand{}, errors.New("Claude Code exec script does not match the expected per-call wrapper shape")
 	}
 	inner, err := decodeEvalArgument(matches[1])

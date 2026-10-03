@@ -552,6 +552,17 @@ func (manager *Manager) stopSession(ctx context.Context, active *session) error 
 	if _, err := manager.client.ContainerRemove(ctx, active.containerID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !isNotFound(err) {
 		errs = append(errs, fmt.Errorf("remove Claude Code container: %w", err))
 	}
+	_, inspectErr = manager.client.ContainerInspect(ctx, active.containerID, client.ContainerInspectOptions{})
+	if inspectErr == nil {
+		errs = append(errs, errors.New("Claude Code container remains after removal"))
+		clearSessionSecrets(active)
+		return errors.Join(errs...)
+	}
+	if !isNotFound(inspectErr) {
+		errs = append(errs, fmt.Errorf("inspect Claude Code after removal: %w", inspectErr))
+		clearSessionSecrets(active)
+		return errors.Join(errs...)
+	}
 	active.containerID = ""
 	clearSessionSecrets(active)
 	if warning := errors.Join(errs...); warning != nil {

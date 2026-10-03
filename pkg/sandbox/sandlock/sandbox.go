@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -82,6 +83,7 @@ type Sandbox struct {
 	stopDone  chan struct{}
 	stopErr   error
 	logMu     sync.Mutex
+	seq       atomic.Uint64
 }
 
 // New constructs a manager without starting a sandbox or contacting Sandlock.
@@ -130,7 +132,7 @@ func (m *Manager) Start(ctx context.Context, request core.SandboxRequest) (runne
 	if err := validateHostKernel(); err != nil {
 		return nil, err
 	}
-	if abi := sandlocksdk.LandlockABIVersion(); abi >= 0 && abi < sandlocksdk.MinLandlockABI() {
+	if abi := sandlocksdk.LandlockABIVersion(); abi < sandlocksdk.MinLandlockABI() {
 		return nil, fmt.Errorf("%w: Landlock ABI %d is below the required %d", ErrUnsupportedKernel, abi, sandlocksdk.MinLandlockABI())
 	}
 	id, err := m.newID()
@@ -163,12 +165,7 @@ func (m *Manager) Start(ctx context.Context, request core.SandboxRequest) (runne
 	}
 	sandbox.policy = policy
 	for _, containerPath := range []string{request.Environment.Workdir, "/tmp", "/logs", "/tests"} {
-		host, err := hostPath(root, containerPath)
-		if err != nil {
-			_ = os.RemoveAll(root)
-			return nil, err
-		}
-		if err := os.MkdirAll(host, 0o755); err != nil {
+		if err := mkdirTaskPath(root, containerPath, 0o755); err != nil {
 			_ = os.RemoveAll(root)
 			return nil, fmt.Errorf("create sandlock path %s: %w", containerPath, err)
 		}
@@ -204,15 +201,8 @@ func prepareRuntimeDirectories(root, workdir string) error {
 		paths = append(paths, workdir, workdir+"/.local", workdir+"/.local/bin")
 	}
 	for _, containerPath := range paths {
-		host, err := hostPath(root, containerPath)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(host, 0o777); err != nil {
+		if err := mkdirTaskPath(root, containerPath, 0o777); err != nil {
 			return fmt.Errorf("create sandlock runtime path %s: %w", containerPath, err)
-		}
-		if err := os.Chmod(host, 0o777); err != nil {
-			return fmt.Errorf("open sandlock runtime path %s: %w", containerPath, err)
 		}
 	}
 	if workdir != "" && workdir != "/" {

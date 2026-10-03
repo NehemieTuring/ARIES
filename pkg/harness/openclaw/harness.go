@@ -76,6 +76,7 @@ type Options struct {
 	StartTimeout   time.Duration
 	AgentTimeout   time.Duration
 	Logger         *logrus.Logger
+	Concurrency    int
 }
 
 type RealtimeOptions struct {
@@ -133,6 +134,7 @@ type Manager struct {
 	logger         *logrus.Logger
 	apiKeyLookup   func(string) ([]byte, bool)
 	mode           string
+	concurrency    int
 	realtime       RealtimeOptions
 	newID          func() (string, error)
 	newGateway     func(string, []byte) (gatewayConnection, error)
@@ -232,6 +234,9 @@ func New(options Options) (*Manager, error) {
 	if options.AgentTimeout <= 0 {
 		options.AgentTimeout = defaultAgentTimeout
 	}
+	if options.Concurrency <= 0 {
+		options.Concurrency = 1
+	}
 	if options.Logger == nil {
 		options.Logger = logrus.StandardLogger()
 	}
@@ -266,7 +271,7 @@ func New(options Options) (*Manager, error) {
 		client: api, image: options.Image, outputDir: outputDir,
 		cleanupTimeout: options.CleanupTimeout, startTimeout: options.StartTimeout,
 		agentTimeout: options.AgentTimeout, logger: options.Logger,
-		apiKeyLookup: options.APIKeyLookup, mode: options.Mode, realtime: options.Realtime, newID: randomID,
+		apiKeyLookup: options.APIKeyLookup, mode: options.Mode, concurrency: options.Concurrency, realtime: options.Realtime, newID: randomID,
 		newGateway: func(rawURL string, token []byte) (gatewayConnection, error) {
 			return newGatewayClientWithDisposition(rawURL, token, gatewayScopes(options.Mode), gatewayEventDisposition(options.Mode))
 		},
@@ -626,6 +631,9 @@ func (manager *Manager) gatewayURL(ctx context.Context, active *session) (string
 		return "", fmt.Errorf("inspect OpenClaw gateway port: %w", err)
 	}
 	if inspection.Container.HostConfig != nil && inspection.Container.HostConfig.NetworkMode == "host" {
+		if manager.concurrency > 1 {
+			return "", errors.New("OpenClaw host networking requires execution concurrency 1")
+		}
 		return "ws://" + net.JoinHostPort("127.0.0.1", gatewayListenPort), nil
 	}
 	if inspection.Container.NetworkSettings == nil {

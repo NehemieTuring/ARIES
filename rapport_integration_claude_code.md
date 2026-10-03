@@ -682,7 +682,7 @@ transformation. C'était l'objectif final du stage ; il est atteint.
 
 **30 runs réels sur deux tâches TB2, n=5 par harness et par tâche** (§9.14) confirment que ce n'est pas un
 coup de chance isolé, et l'échantillon est maintenant assez grand pour distinguer un écart réel du bruit
-sur plusieurs points : Claude Code reste net sur les deux tâches en CPU/mémoire ; OpenClaw et Hermes
+sur plusieurs points : Claude Code est nettement plus léger qu'OpenClaw en CPU et en mémoire, et l'écart avec Hermes n'est pas significatif ; OpenClaw et Hermes
 partagent le même modèle (DeepSeek), donc leurs écarts sont directement imputables au harness — et ils
 sont importants : OpenClaw consomme 2,5 à 3× plus de CPU/mémoire qu'Hermes sur les deux tâches, et surtout
 **ne réussit `overfull-hbox-001` que 2 fois sur 5** contre 5/5 pour Hermes, un vrai problème de fiabilité

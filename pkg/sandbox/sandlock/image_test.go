@@ -90,6 +90,40 @@ func TestExtractArchiveKeepsHardLink(t *testing.T) {
 	}
 }
 
+func TestExtractArchiveDoesNotFollowParentSymlinkOutsideRoot(t *testing.T) {
+	var buf bytes.Buffer
+	writer := tar.NewWriter(&buf)
+	if err := writer.WriteHeader(&tar.Header{Name: "a/b", Mode: 0o777, Typeflag: tar.TypeSymlink, Linkname: ".."}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteHeader(&tar.Header{Name: "a/b/c", Mode: 0o777, Typeflag: tar.TypeSymlink, Linkname: "../../home"}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("pwned")
+	if err := writer.WriteHeader(&tar.Header{Name: "a/b/c/.bashrc", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := extractArchive(root, bytes.NewReader(buf.Bytes()))
+	escaped := filepath.Join(filepath.Dir(parent), "home", ".bashrc")
+	if _, statErr := os.Stat(escaped); !os.IsNotExist(statErr) {
+		t.Fatalf("archive wrote %s (extract error %v)", escaped, err)
+	}
+	if err == nil {
+		t.Fatal("expected the path through an escaping symlink to be rejected")
+	}
+}
+
 func assertLink(t *testing.T, path, want string) {
 	t.Helper()
 	got, err := os.Readlink(path)

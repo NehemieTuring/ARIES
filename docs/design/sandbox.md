@@ -24,8 +24,8 @@ An empty value is rejected. Any other value still has to be `docker` or
 
 Docker owns a task container and network. Sandlock does not start a task
 container. Each command is a host process confined with Landlock, seccomp-bpf,
-seccomp user notification, a filesystem policy, a network allowlist, and
-copy-on-write on the task workdir. Those controls are not cgroups or namespaces. The private directory is written
+seccomp user notification, a filesystem policy, and a network allowlist.
+Those controls are not cgroups or namespaces. The private directory is written
 directly. Sandlock's copy-on-write branch is not used, because creates in that
 branch are not visible to later lookups in the same command. `/usr`, `/var`,
 and `/etc` are writable so a verifier can keep package state. The copied image
@@ -35,8 +35,9 @@ uid: this host's AppArmor profile for unconfined programs denies the
 `sys_admin` capability required to map uid 0. `SHELL` is `/bin/sh` so an
 installer that cannot read `/proc/self/exe` can still see an ELF binary. A
 command is reaped when its process exits, even if the caller has not closed
-standard input. Sandlock allows one live process for a sandbox name, so holding
-that name until stdin closes makes every later command fail with `popen failed`.
+standard input. Sandlock allows one live process for a sandbox name, so each command
+receives its own name. Holding one name until stdin closes is still avoided:
+the SSH bridge leaves its channel open until it sees an exit status.
 
 Terminal-Bench still runs each task's own `/tests/test.sh`. Across the pinned
 set of 89 scripts, 82 install uv 0.9.5 with curl and all 89 write
@@ -99,7 +100,11 @@ A Sandlock run uses the same command with `"sandbox": {"type": "sandlock"}`,
 or with `ARIES_SANDBOX_TYPE=sandlock` in the environment or the repository-root
 `.env`.
 The host must be Linux 6.12 or newer and must have `libsandlock_ffi` visible
-to pkg-config. ARIES returns an error when that protection is unavailable. It
+to pkg-config. `make build` and `go test` link that library even when the
+selected sandbox is Docker. The host also needs `gcc`: ARIES compiles
+`libaries-realpath.so` with the host toolchain when a Sandlock sandbox starts.
+That library matches the host libc. An image built on musl can fail to load it.
+ARIES returns an error when Landlock is unavailable. It
 does not fall back to Docker.
 
 ## Customization & Contribution Guide

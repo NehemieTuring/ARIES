@@ -1,3 +1,6 @@
+<!DOCTYPE html>
+<html lang="fr">
+<meta charset="utf-8">
 <title>Harness Telemetry Comparison</title>
 <meta name="description" content="OpenClaw, Hermes et Claude Code sur deux tâches Terminal-Bench 2 dans ARIES : durée, pic CPU et mémoire moyenne du harness, run par run.">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -370,6 +373,7 @@
   <p class="dek">OpenClaw, Hermes et Claude Code lancés sur les mêmes tâches Terminal-Bench 2 dans ARIES —
   même sandbox, la même télémétrie CPU/mémoire échantillonnée chaque seconde.</p>
   <p class="meta" id="meta">30 runs réels · n=5 par harness et par tâche · 17 août – 5 sept. 2026 · pont SSH révoqué avant chaque évaluation</p>
+  <p class="meta" id="taskBlurb"></p>
 
   <div class="caveat">
     <span>⚠️</span>
@@ -701,7 +705,7 @@
     renderTaskSwitch();
     document.getElementById("chartsTitle").textContent =
       "Empreinte du harness — " + TASKS[activeTask].title;
-    document.getElementById("meta").innerHTML =
+    document.getElementById("taskBlurb").innerHTML =
       "<code>" + TASKS[activeTask].title + "</code> : " + TASKS[activeTask].blurb;
     renderHeadline();
     renderLegend();

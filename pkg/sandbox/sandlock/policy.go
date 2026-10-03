@@ -235,3 +235,18 @@ func hostPath(root, containerPath string) (string, error) {
 	}
 	return filepath.Join(root, strings.TrimPrefix(clean, "/")), nil
 }
+
+// rootName is the hostPath location relative to the private root. os.Root
+// operations use it so a symlink already stored in the tree cannot redirect
+// a later create outside that root.
+func rootName(containerPath string) (string, error) {
+	const base = "/sandlock-root"
+	host, err := hostPath(base, containerPath)
+	if err != nil {
+		return "", err
+	}
+	if host == base {
+		return ".", nil
+	}
+	return strings.TrimPrefix(host, base+"/"), nil
+}

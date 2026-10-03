@@ -98,11 +98,10 @@ const (
 	// sandbox, never locally.
 	bashWrapperPath = "/bin/bash"
 
-	// claudeProjectsGlob is where Claude Code persists its own JSONL session
-	// transcripts, keyed by an escaped form of the working directory. TODO:
-	// confirm the exact escaping scheme against the pinned image's Claude Code
-	// version before relying on this path in collectSessions.
-	claudeProjectsRoot = "/home/aries/.claude/projects"
+	// Claude Code writes projects/<escaped-cwd>/*.jsonl under CLAUDE_CONFIG_DIR.
+	// Start sets that directory to stateRoot, so transcripts are not under
+	// the image user's default ~/.claude.
+	claudeProjectsRoot = stateRoot + "/projects"
 )
 
 // idleEntrypoint/idleCommand mirror Hermes: ARIES owns exactly when the agent

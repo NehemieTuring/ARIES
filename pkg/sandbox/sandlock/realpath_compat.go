@@ -50,13 +50,21 @@ func installRealpathCompat(root string) error {
 	if err != nil {
 		return err
 	}
-	dest, err := hostPath(root, realpathCompatPath)
+	name, err := rootName(realpathCompatPath)
 	if err != nil {
 		return err
 	}
-	parent := filepath.Dir(dest)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	fs, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
+	if err := mkdirParent(fs, name); err != nil {
 		return fmt.Errorf("create sandlock realpath helper directory: %w", err)
+	}
+	parent, err := hostPath(root, filepath.Dir(realpathCompatPath))
+	if err != nil {
+		return err
 	}
 	resolvedParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
@@ -69,8 +77,13 @@ func installRealpathCompat(root string) error {
 	if resolvedParent != resolvedRoot && !strings.HasPrefix(resolvedParent, resolvedRoot+string(os.PathSeparator)) {
 		return fmt.Errorf("sandlock realpath helper %s escapes the private root", realpathCompatPath)
 	}
-	if err := os.WriteFile(dest, library, 0o755); err != nil {
+	output, err := fs.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	if err != nil {
 		return fmt.Errorf("install sandlock realpath helper: %w", err)
 	}
-	return nil
+	if _, err := output.Write(library); err != nil {
+		output.Close()
+		return fmt.Errorf("install sandlock realpath helper: %w", err)
+	}
+	return output.Close()
 }

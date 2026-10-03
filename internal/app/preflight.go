@@ -238,7 +238,10 @@ func validateSGLangModel(ctx context.Context, model core.ModelConfig, key []byte
 func validateAnthropicModel(ctx context.Context, model core.ModelConfig, key []byte, doer httpDoer) (liveValidation, error) {
 	client := doer
 	if client == nil {
-		client = &http.Client{Timeout: anthropicRequestTimeout}
+		client = &http.Client{
+			Timeout:       anthropicRequestTimeout,
+			CheckRedirect: refuseRedirects,
+		}
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, anthropicRequestTimeout)
 	defer cancel()
@@ -315,7 +318,10 @@ func validateAnthropicModel(ctx context.Context, model core.ModelConfig, key []b
 func validateGeminiModel(ctx context.Context, model core.ModelConfig, key []byte, doer httpDoer) (liveValidation, error) {
 	client := doer
 	if client == nil {
-		client = &http.Client{Timeout: geminiRequestTimeout}
+		client = &http.Client{
+			Timeout:       geminiRequestTimeout,
+			CheckRedirect: refuseRedirects,
+		}
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, geminiRequestTimeout)
 	defer cancel()
@@ -398,12 +404,14 @@ func isOfficialGemini(model core.ModelConfig) bool {
 	return model.Provider == "gemini" && model.BaseURL == geminiBaseURL
 }
 
+func refuseRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 func newDeepSeekHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: deepSeekRequestTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Timeout:       deepSeekRequestTimeout,
+		CheckRedirect: refuseRedirects,
 	}
 }
 

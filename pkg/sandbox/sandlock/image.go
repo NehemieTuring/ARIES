@@ -82,11 +82,7 @@ func seedFromImage(ctx context.Context, image, root, workdir string) error {
 	if err := extractArchive(root, copied.Content); err != nil {
 		return fmt.Errorf("sandlock workspace seed: %w", err)
 	}
-	hostWork, err := hostPath(root, workdir)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(hostWork, 0o755); err != nil {
+	if err := mkdirTaskPath(root, workdir, 0o755); err != nil {
 		return fmt.Errorf("sandlock workspace seed: create workdir: %w", err)
 	}
 	return nil
@@ -139,18 +135,49 @@ func installHostExecutable(root, executable string) error {
 }
 
 func copyHostTree(root, source string) error {
-	target, err := hostPath(root, source)
+	fs, err := os.OpenRoot(root)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	defer fs.Close()
+	name, err := rootName(source)
+	if err != nil {
 		return err
 	}
-	output, err := exec.Command("cp", "-a", source, target).CombinedOutput()
+	return copyHostInto(fs, source, name)
+}
+
+func copyHostInto(fs *os.Root, source, name string) error {
+	info, err := os.Lstat(source)
 	if err != nil {
-		return fmt.Errorf("copy %s into sandlock root: %w (%s)", source, err, output)
+		return err
 	}
-	return nil
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(source)
+		if err != nil {
+			return err
+		}
+		return fs.Symlink(target, name)
+	}
+	if info.IsDir() {
+		if err := fs.MkdirAll(name, 0o755); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(source)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := copyHostInto(fs, filepath.Join(source, entry.Name()), name+"/"+entry.Name()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	return writeHostFile(fs, source, name, info.Mode().Perm())
 }
 
 func copyRegular(root, source string) error {
@@ -158,23 +185,35 @@ func copyRegular(root, source string) error {
 	if err != nil {
 		return err
 	}
-	input, err := os.Open(resolved)
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return err
+	}
+	name, err := rootName(source)
+	if err != nil {
+		return err
+	}
+	fs, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
+	return writeHostFile(fs, resolved, name, info.Mode().Perm())
+}
+
+func writeHostFile(fs *os.Root, source, name string, perm os.FileMode) error {
+	input, err := os.Open(source)
 	if err != nil {
 		return err
 	}
 	defer input.Close()
-	info, err := input.Stat()
-	if err != nil {
-		return err
+	parent := filepath.Dir(name)
+	if parent != "." {
+		if err := fs.MkdirAll(parent, 0o755); err != nil {
+			return err
+		}
 	}
-	target, err := hostPath(root, source)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	output, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+	output, err := fs.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
 	if err != nil {
 		return err
 	}
@@ -186,6 +225,11 @@ func copyRegular(root, source string) error {
 }
 
 func extractArchive(root string, content io.Reader) error {
+	fs, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
 	reader := tar.NewReader(content)
 	var links []archiveLink
 	for {
@@ -196,7 +240,7 @@ func extractArchive(root string, content io.Reader) error {
 		if err != nil {
 			return fmt.Errorf("read image archive: %w", err)
 		}
-		target, ok, err := archiveTarget(root, header.Name)
+		name, ok, err := archiveName(header.Name)
 		if err != nil {
 			return err
 		}
@@ -205,14 +249,14 @@ func extractArchive(root string, content io.Reader) error {
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := fs.MkdirAll(name, 0o755); err != nil {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := mkdirParent(fs, name); err != nil {
 				return err
 			}
-			file, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode)&0o777)
+			file, err := fs.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode)&0o777)
 			if err != nil {
 				return err
 			}
@@ -227,41 +271,65 @@ func extractArchive(root string, content io.Reader) error {
 			// Merged Debian images store /bin as a symlink to usr/bin. The
 			// target is rewritten relative to the private root so a host walk
 			// cannot leave that directory, while the chroot still resolves it.
-			link, err := relativeSymlink(root, target, header.Linkname)
+			link, err := relativeSymlink(name, header.Linkname)
 			if err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := mkdirParent(fs, name); err != nil {
 				return err
 			}
-			if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := fs.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
-			if err := os.Symlink(link, target); err != nil {
+			if err := fs.Symlink(link, name); err != nil {
 				return fmt.Errorf("image archive symlink %q: %w", header.Name, err)
 			}
 		case tar.TypeLink:
-			links = append(links, archiveLink{target: target, sourceName: header.Linkname, name: header.Name})
+			links = append(links, archiveLink{target: name, sourceName: header.Linkname, name: header.Name})
 		default:
 			continue
 		}
 	}
 	for _, link := range links {
-		source, ok, err := archiveTarget(root, link.sourceName)
+		source, ok, err := archiveName(link.sourceName)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return fmt.Errorf("image archive hard link %q has an empty source", link.name)
 		}
-		if err := os.MkdirAll(filepath.Dir(link.target), 0o755); err != nil {
+		if err := mkdirParent(fs, link.target); err != nil {
 			return err
 		}
-		if err := os.Link(source, link.target); err != nil {
+		if err := fs.Link(source, link.target); err != nil {
 			return fmt.Errorf("image archive hard link %q: %w", link.name, err)
 		}
 	}
 	return nil
+}
+
+func mkdirParent(fs *os.Root, name string) error {
+	parent := filepath.Dir(name)
+	if parent == "." {
+		return nil
+	}
+	return fs.MkdirAll(parent, 0o755)
+}
+
+func mkdirTaskPath(root, containerPath string, perm os.FileMode) error {
+	name, err := rootName(containerPath)
+	if err != nil {
+		return err
+	}
+	fs, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer fs.Close()
+	if err := fs.MkdirAll(name, perm); err != nil {
+		return err
+	}
+	return fs.Chmod(name, perm)
 }
 
 type archiveLink struct {
@@ -270,41 +338,41 @@ type archiveLink struct {
 	name       string
 }
 
-func archiveTarget(root, name string) (string, bool, error) {
+func archiveName(name string) (string, bool, error) {
 	cleaned := strings.TrimPrefix(filepath.Clean("/"+name), "/")
 	if cleaned == "" || cleaned == "." {
 		return "", false, nil
 	}
-	target := filepath.Join(root, cleaned)
-	relative, err := filepath.Rel(root, target)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", false, fmt.Errorf("image archive path %q escapes the workspace", name)
 	}
-	return target, true, nil
+	return cleaned, true, nil
 }
 
-func relativeSymlink(root, linkPath, raw string) (string, error) {
+func relativeSymlink(linkName, raw string) (string, error) {
+	const base = "/sandlock-root"
 	if raw == "" || strings.ContainsRune(raw, 0) {
-		return "", fmt.Errorf("image archive symlink %q has an empty target", linkPath)
+		return "", fmt.Errorf("image archive symlink %q has an empty target", linkName)
 	}
+	linkPath := filepath.Join(base, linkName)
 	linkDir := filepath.Dir(linkPath)
 	var destination string
 	if filepath.IsAbs(raw) {
 		cleaned := filepath.Clean(raw)
 		if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-			return "", fmt.Errorf("image archive symlink %q escapes the workspace", linkPath)
+			return "", fmt.Errorf("image archive symlink %q escapes the workspace", linkName)
 		}
-		destination = filepath.Join(root, strings.TrimPrefix(cleaned, "/"))
+		destination = filepath.Join(base, strings.TrimPrefix(cleaned, "/"))
 	} else {
 		destination = filepath.Clean(filepath.Join(linkDir, raw))
 	}
-	relative, err := filepath.Rel(root, destination)
+	relative, err := filepath.Rel(base, destination)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("image archive symlink %q escapes the workspace", linkPath)
+		return "", fmt.Errorf("image archive symlink %q escapes the workspace", linkName)
 	}
 	rewritten, err := filepath.Rel(linkDir, destination)
 	if err != nil {
-		return "", fmt.Errorf("image archive symlink %q escapes the workspace", linkPath)
+		return "", fmt.Errorf("image archive symlink %q escapes the workspace", linkName)
 	}
 	return rewritten, nil
 }

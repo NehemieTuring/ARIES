@@ -173,7 +173,7 @@ func newHarness(cfg config.Config, outputRoot string, lookup func(string) ([]byt
 			ReasoningEffort:       cfg.Harness.Realtime.ReasoningEffort,
 			IncludeEvents:         cfg.Harness.Realtime.IncludeEvents,
 		}
-		manager, err := openclawharness.New(openclawharness.Options{Image: cfg.Versions.OpenClaw.Image, OutputDir: outputRoot, APIKeyLookup: lookup, Logger: logger, Mode: cfg.Harness.Mode, Realtime: realtime})
+		manager, err := openclawharness.New(openclawharness.Options{Image: cfg.Versions.OpenClaw.Image, OutputDir: outputRoot, APIKeyLookup: lookup, Logger: logger, Mode: cfg.Harness.Mode, Realtime: realtime, Concurrency: cfg.Execution.Concurrency})
 		if err != nil {
 			return app.HarnessInstance{}, fmt.Errorf("construct OpenClaw harness: %w", err)
 		}

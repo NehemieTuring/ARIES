@@ -24,11 +24,16 @@ func (s *Sandbox) Upload(_ context.Context, source, destination string) error {
 	if !info.Mode().IsRegular() {
 		return errors.New("sandlock upload source must be a regular file")
 	}
-	target, err := hostPath(s.root, destination)
+	name, err := rootName(destination)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	fs, err := os.OpenRoot(s.root)
+	if err != nil {
+		return fmt.Errorf("open sandlock root: %w", err)
+	}
+	defer fs.Close()
+	if err := mkdirParent(fs, name); err != nil {
 		return fmt.Errorf("create sandlock upload directory: %w", err)
 	}
 	input, err := os.Open(source)
@@ -36,7 +41,7 @@ func (s *Sandbox) Upload(_ context.Context, source, destination string) error {
 		return fmt.Errorf("open sandlock upload source: %w", err)
 	}
 	defer input.Close()
-	output, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+	output, err := fs.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
 	if err != nil {
 		return fmt.Errorf("create sandlock upload destination: %w", err)
 	}
@@ -58,18 +63,23 @@ func (s *Sandbox) Download(_ context.Context, source, destination string) error 
 	if err != nil {
 		return err
 	}
-	host, err := hostPath(s.root, source)
+	name, err := rootName(source)
 	if err != nil {
 		return err
 	}
-	info, err := os.Lstat(host)
+	fs, err := os.OpenRoot(s.root)
+	if err != nil {
+		return fmt.Errorf("open sandlock root: %w", err)
+	}
+	defer fs.Close()
+	info, err := fs.Lstat(name)
 	if err != nil {
 		return fmt.Errorf("stat sandlock download source: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return errors.New("sandlock download source must be a regular file")
 	}
-	input, err := os.Open(host)
+	input, err := fs.Open(name)
 	if err != nil {
 		return fmt.Errorf("open sandlock download source: %w", err)
 	}

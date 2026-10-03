@@ -819,6 +819,19 @@ func TestGatewayURLUsesLoopbackWhenNetworkIsHost(t *testing.T) {
 	}
 }
 
+func TestGatewayURLRejectsHostNetworkWhenTasksRunConcurrently(t *testing.T) {
+	fake := newFakeDocker()
+	fake.container = container.InspectResponse{
+		ID:         "id",
+		HostConfig: &container.HostConfig{NetworkMode: "host"},
+	}
+	manager := newTestManager(t, fake, []byte("model-secret"))
+	manager.concurrency = 2
+	if _, err := manager.gatewayURL(context.Background(), &session{containerID: "id"}); err == nil || !strings.Contains(err.Error(), "concurrency") {
+		t.Fatalf("gatewayURL error = %v", err)
+	}
+}
+
 func TestGatewayURLRejectsMissingDuplicateWildcardAndInvalidBindings(t *testing.T) {
 	for name, bindings := range map[string][]network.PortBinding{
 		"missing":   nil,

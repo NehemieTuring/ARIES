@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -68,7 +69,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 	policy := s.policy.sandbox()
 	policy.Cwd = command.Dir
 	policy.Env = commandEnvironment(s.policy.Env, command.Env)
-	policy.Name = s.name
+	policy.Name = s.name + "-" + strconv.FormatUint(s.seq.Add(1), 10)
 	proc, err := policy.Popen(stdio, append([]string{command.Path}, command.Args...)...)
 	if err != nil {
 		wrapped := fmt.Errorf("start sandlock process: %w", err)
@@ -119,8 +120,21 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 		<-waitDone
 	case <-waitDone:
 	}
-	for range 2 {
-		<-copyErr
+	pending := 2
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for pending > 0 {
+		select {
+		case <-copyErr:
+			pending--
+		case <-timer.C:
+			_ = proc.Stdout.Close()
+			_ = proc.Stderr.Close()
+			for pending > 0 {
+				<-copyErr
+				pending--
+			}
+		}
 	}
 	ended := time.Now()
 	record := execRecord{

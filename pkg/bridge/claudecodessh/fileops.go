@@ -129,7 +129,7 @@ func (session *bridgeSession) executeFileOp(ctx context.Context, channel ssh.Cha
 		exitCode, runErr = result.ExitCode, err
 	case fileOpGrep:
 		result, err := session.sandbox.ExecStream(ctx,
-			core.Command{Path: "/usr/bin/env", Args: []string{"grep", "-r", "-n", "-I", "--", op.args[0], op.args[1]}, Dir: workdir},
+			core.Command{Path: "/usr/bin/env", Args: []string{"grep", "-r", "-n", "-I", "-E", "--", op.args[0], op.args[1]}, Dir: workdir},
 			nil, session.teeWriter(channel, "stdout"), session.teeWriter(channel.Stderr(), "stderr"))
 		exitCode, runErr = result.ExitCode, err
 	default:
