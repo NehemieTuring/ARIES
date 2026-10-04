@@ -20,6 +20,15 @@ sorted scope metadata may leave the authentication boundary.
 
 Realtime and voice-transcribe both convert the task instruction to staged audio and stream it through an authenticated OpenClaw Gateway Talk session. Realtime owns one `realtime` talk session and may invoke nested agent runs through the same authenticated client. Voice-transcribe owns one `transcription` session only for streaming speech recognition. After the final transcript is accepted, ARIES closes that realtime gateway connection and opens a response-only gateway connection with agent write scope for an OpenClaw agent request using the transcript as text input. Their audio, transcript, result, and optional event records remain private harness artifacts. The separate realtime/TTS credential is staged privately for voice mode and is not part of model configuration, Gateway authentication, or structured results.
 
+## Claude Code
+
+Claude Code runs a locally built image as the unprivileged user `aries`. The
+manager holds the container idle, then executes one `claude -p` instruction.
+Bash tool calls are replaced inside the image and forwarded over SSH. Native
+file tools are denied; `cmd/aries-claudecode-mcpfiles` serves the same
+operations in the sandbox. The API key stays in a private file read by
+`apiKeyHelper`.
+
 ## Hermes
 
 Hermes is the second supported harness and runs the pinned upstream image

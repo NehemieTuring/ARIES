@@ -527,6 +527,27 @@ Artifacts land under `<run>/<task>/harness/`: the redacted `config.yaml`, the
 one-shot's `hermes_stdout.log` and `hermes_stderr.log`, `container.log`, and the
 exported message-level trajectory at `telemetry/sessions.jsonl`.
 
+### Claude Code
+
+Claude Code is a third harness. It is paired with `bridge.type:
+"claude-code-ssh"` and `runtime.backend: "anthropic"`. The official base URL
+is `https://api.anthropic.com`. The API key comes from `ANTHROPIC_API_KEY`.
+`model.workspace_id` is an Anthropic workspace identifier, not a secret, and
+is sent as the `anthropic-workspace-id` header.
+
+Anthropic does not publish a registry image for the CLI. Build the local image
+and keep the pin in `configs/versions.json`:
+
+```sh
+docker build -t aries-claudecode:2.1.245 images/claudecode
+go build -o bin/aries-claudecode-mcpfiles ./cmd/aries-claudecode-mcpfiles
+./bin/aries profiles/claudecode-tb2-fix-git-anthropic.json
+```
+
+The harness copies `aries-claudecode-mcpfiles` into the container. That binary
+is the sandbox-routed file server. `make build` does not produce it. Web
+search, subagents, realtime, and voice-transcribe stay on OpenClaw or Hermes.
+
 ### Hermes context window, compaction, and request extra body
 
 Three optional profile blocks reach the rendered Hermes `config.yaml`. Each is

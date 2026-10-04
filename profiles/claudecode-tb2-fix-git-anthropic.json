@@ -1,0 +1,47 @@
+{
+  "name": "claudecode-tb2-fix-git-anthropic",
+  "versions_file": "../configs/versions.json",
+  "overrides_file": "",
+  "execution": {
+    "concurrency": 1
+  },
+  "benchmark": {
+    "type": "terminalbench2",
+    "root": ".cache/terminal-bench-2-1",
+    "tasks": [
+      "fix-git"
+    ]
+  },
+  "harness": {
+    "type": "claude-code",
+    "deployment": {
+      "backend": "docker",
+      "docker": {
+        "socket": "/var/run/docker.sock"
+      }
+    }
+  },
+  "sandbox": {
+    "deployment": {
+      "backend": "docker",
+      "docker": {
+        "socket": "/var/run/docker.sock"
+      }
+    }
+  },
+  "bridge": {
+    "type": "claude-code-ssh",
+    "mode": "embedded"
+  },
+  "runtime": {
+    "backend": "anthropic",
+    "mode": "external"
+  },
+  "model": {
+    "base_url": "https://api.anthropic.com",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "id": "claude-sonnet-5",
+    "workspace_id": "wrkspc_01NSx3fAs1WjdZNDvQqdyMWq"
+  },
+  "output_dir": "runs"
+}

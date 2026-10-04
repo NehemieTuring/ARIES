@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hyscale-lab/aries/pkg/core"
@@ -23,6 +24,10 @@ const (
 	deepSeekRetryDelay       = 2 * time.Second
 	deepSeekMaxAttempts      = 2
 	deepSeekMaxResponseBytes = 64 << 10
+	anthropicBaseURL         = "https://api.anthropic.com"
+	anthropicModelsURL       = anthropicBaseURL + "/v1/models"
+	anthropicAPIVersion      = "2023-06-01"
+	anthropicRequestTimeout  = 10 * time.Second
 	managedStartupRetryDelay = time.Second
 )
 
@@ -90,6 +95,10 @@ func validateLiveModel(
 			return liveValidationFailure(model, liveValidationConfigurationInvalid, 0)
 		}
 	case "sglang", "openai":
+	case "anthropic":
+		if !isOfficialAnthropic(model) {
+			return liveValidationFailure(model, liveValidationConfigurationInvalid, 0)
+		}
 	default:
 		return liveValidationFailure(model, liveValidationConfigurationInvalid, 0)
 	}
@@ -107,6 +116,9 @@ func validateLiveModel(
 	}
 	if model.Provider == "sglang" || model.Provider == "openai" {
 		return validateOpenAICompatibleModel(ctx, model, key, client)
+	}
+	if model.Provider == "anthropic" {
+		return validateAnthropicModel(ctx, model, key, client)
 	}
 	if client == nil {
 		client = newDeepSeekHTTPClient()
@@ -297,6 +309,91 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func validateAnthropicModel(ctx context.Context, model core.ModelConfig, key []byte, doer httpDoer) (liveValidation, error) {
+	client := doer
+	if client == nil {
+		client = &http.Client{Timeout: anthropicRequestTimeout, CheckRedirect: refuseRedirects}
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, anthropicRequestTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, anthropicModelsURL, nil)
+	if err != nil {
+		return liveValidationFailure(model, liveValidationConfigurationInvalid, 0)
+	}
+	request.Header.Set("x-api-key", string(key))
+	request.Header.Set("anthropic-version", anthropicAPIVersion)
+	request.Header.Set("Accept", "application/json")
+	if trimmed := strings.TrimSpace(model.WorkspaceID); trimmed != "" {
+		request.Header.Set("anthropic-workspace-id", trimmed)
+	}
+	response, err := client.Do(request)
+	request.Header.Del("x-api-key")
+	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if ctx.Err() != nil {
+			return liveValidationFailure(model, liveValidationCanceled, 1)
+		}
+		return liveValidationFailure(model, liveValidationTransport, 1)
+	}
+	if response == nil {
+		return liveValidationFailure(model, liveValidationTransport, 1)
+	}
+	body, bodyErr := readBoundedResponse(response.Body)
+	if response.Body != nil {
+		_ = response.Body.Close()
+	}
+	defer clear(body)
+	switch response.StatusCode {
+	case http.StatusInternalServerError, http.StatusServiceUnavailable:
+		return liveValidationFailure(model, liveValidationServer, 1)
+	case http.StatusUnauthorized:
+		return liveValidationFailure(model, liveValidationUnauthorized, 1)
+	case http.StatusForbidden:
+		return liveValidationFailure(model, liveValidationForbidden, 1)
+	case http.StatusTooManyRequests:
+		return liveValidationFailure(model, liveValidationRateLimited, 1)
+	}
+	if response.StatusCode >= 300 && response.StatusCode < 400 {
+		return liveValidationFailure(model, liveValidationRedirect, 1)
+	}
+	if response.StatusCode != http.StatusOK {
+		return liveValidationFailure(model, liveValidationHTTP, 1)
+	}
+	if bodyErr != nil {
+		if errors.Is(bodyErr, errResponseTooLarge) {
+			return liveValidationFailure(model, liveValidationResponseTooLarge, 1)
+		}
+		return liveValidationFailure(model, liveValidationResponseRead, 1)
+	}
+	var models struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &models); err != nil {
+		return liveValidationFailure(model, liveValidationMalformed, 1)
+	}
+	for _, candidate := range models.Data {
+		if candidate.ID == model.Model {
+			return liveValidation{
+				SchemaVersion: 1, Status: liveValidationSucceeded, Category: liveValidationConfirmed,
+				Provider: "anthropic", BaseURL: model.BaseURL, Model: model.Model, Attempts: 1,
+			}, nil
+		}
+	}
+	return liveValidationFailure(model, liveValidationModelMissing, 1)
+}
+
+func isOfficialAnthropic(model core.ModelConfig) bool {
+	return model.Provider == "anthropic" && model.BaseURL == anthropicBaseURL
+}
+
+func refuseRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 func isOfficialDeepSeek(model core.ModelConfig) bool {

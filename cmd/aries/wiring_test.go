@@ -126,6 +126,8 @@ func TestValidateComponentsRequiresPairedHarnessAndBridge(t *testing.T) {
 	}{
 		{name: "openclaw pair", harness: "openclaw", bridge: "openclaw-ssh"},
 		{name: "hermes pair", harness: "hermes", bridge: "hermes-ssh"},
+		{name: "claude code pair", harness: "claude-code", bridge: "claude-code-ssh"},
+		{name: "claude code with hermes bridge", harness: "claude-code", bridge: "hermes-ssh", wantErr: true},
 		{name: "hermes with openclaw bridge", harness: "hermes", bridge: "openclaw-ssh", wantErr: true},
 		{name: "openclaw with hermes bridge", harness: "openclaw", bridge: "hermes-ssh", wantErr: true},
 	} {

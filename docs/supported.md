@@ -16,13 +16,15 @@ This page summarizes capabilities and limitations. Use the
 | --- | --- | --- |
 | Agent harness | **OpenClaw** — text, realtime, and voice-transcribe modes; web tools and configurable subagent spawning | [Harness configuration](configuration.md), [realtime mode](configuration.md#realtime-openclaw-mode), [voice guide](voice_mode.md) |
 | Agent harness | **Hermes** — text and voice-transcribe modes; web tools, context compaction, and custom request bodies for compatible backends | [Hermes configuration](configuration.md#hermes-context-window-compaction-and-request-extra-body), [voice guide](voice_mode.md) |
+| Agent harness | **Claude Code** — text mode; SSH tool calls and a companion MCP file server | [Claude Code](configuration.md#claude-code) |
 | Benchmark | **Terminal-Bench 2** — verifier-based terminal tasks | [Quick start](quick-start.md) |
 | Benchmark | **Deep Research Bench** — open-ended research reports with RACE grading and optional FACT citation checking; grading can be disabled | [Benchmark guide](benchmarks/deep-research-bench.md) |
 | Benchmark | **SWE-Atlas QA** — codebase Q&A with host-side rubric grading; grading can be disabled; only the QA track is implemented | [Benchmark guide](benchmarks/swe-atlas-qa.md) |
 | Benchmark | **SWE-bench Pro** — public issue-resolution split with pinned task scripts and parser | [Benchmark guide](benchmarks/swe-bench-pro.md) |
 | Tool sandbox and deployment | **Docker** — local containers managed through the Moby Go SDK | [Deployment configuration](configuration.md#deployment-configuration), [Docker implementation](implementation/docker.md) |
-| Tool bridge | **OpenClaw SSH** and **Hermes SSH** — embedded, harness-specific adapters | [SSH bridge implementation](implementation/ssh-bridges.md) |
+| Tool bridge | **OpenClaw SSH**, **Hermes SSH**, and **Claude Code SSH** — embedded, harness-specific adapters | [SSH bridge implementation](implementation/ssh-bridges.md) |
 | Model service | **DeepSeek** — external endpoint | [Model backends](configuration.md#model-backends) |
+| Model service | **Anthropic** — external endpoint for the Claude Code harness | [Claude Code](configuration.md#claude-code) |
 | Model service | **SGLang** — external endpoint or one ARIES-managed host process per run | [Model backends](configuration.md#model-backends) |
 | Model service | **OpenAI-compatible server** — external only, including vLLM, llama.cpp, gateways, and hosted endpoints | [Model backends](configuration.md#model-backends) |
 
@@ -37,7 +39,10 @@ guides above.
 - Each SSH bridge supports its corresponding harness. Crossed pairs are rejected
   before execution. Hermes requires `/bin/bash` in the task image; its bridge
   rejects Hermes's private `~/.hermes` file synchronization. OpenClaw requires
-  `bin/aries-ssh` beside `bin/aries`.
+  `bin/aries-ssh` beside `bin/aries`. Claude Code requires
+  `bin/aries-claudecode-mcpfiles` beside `bin/aries`, or
+  `ARIES_CLAUDE_CODE_MCPFILES_BIN`, and a locally built image pinned by
+  `claudecode.image`.
 - Realtime mode is OpenClaw-only and needs a separate TTS credential. See the
   [realtime setup](configuration.md#realtime-openclaw-mode).
 - External model servers are operated separately from ARIES. ARIES does not

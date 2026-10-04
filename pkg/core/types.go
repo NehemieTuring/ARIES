@@ -85,6 +85,9 @@ type ModelConfig struct {
 	BaseURL   string `json:"base_url"`
 	Model     string `json:"model"`
 	APIKeyEnv string `json:"api_key_env"`
+	// WorkspaceID is an Anthropic workspace identifier for identity-linked keys.
+	// It is not a secret. Other providers leave it empty.
+	WorkspaceID string `json:"workspace_id,omitempty"`
 	// ContextLength, MaxTokens, and Temperature are optional generation
 	// settings the harness writes into its own model configuration. Zero or
 	// nil keeps the harness default. Only the Hermes harness renders them.

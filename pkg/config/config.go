@@ -103,6 +103,9 @@ type ProfileModel struct {
 	ID        string `json:"id"`
 	BaseURL   string `json:"base_url"`
 	APIKeyEnv string `json:"api_key_env"`
+	// WorkspaceID is an Anthropic workspace identifier for identity-linked keys.
+	// It is not a secret. Other backends leave it empty.
+	WorkspaceID string `json:"workspace_id,omitempty"`
 	// ContextLength, MaxTokens, and Temperature are optional. They reach the
 	// harness through core.ModelConfig. Only Hermes renders them, so a
 	// profile that sets one under another harness is rejected.
@@ -403,7 +406,7 @@ func (c BridgeConfig) RetainBridgeRawLog() bool {
 
 func (c Config) CoreModel() core.ModelConfig {
 	return core.ModelConfig{
-		Provider: c.Runtime.Backend, BaseURL: c.Model.BaseURL, Model: c.Model.ID, APIKeyEnv: c.Model.APIKeyEnv,
+		Provider: c.Runtime.Backend, BaseURL: c.Model.BaseURL, Model: c.Model.ID, APIKeyEnv: c.Model.APIKeyEnv, WorkspaceID: c.Model.WorkspaceID,
 		ContextLength: c.Model.ContextLength, MaxTokens: c.Model.MaxTokens, Temperature: c.Model.Temperature,
 	}
 }
@@ -416,6 +419,13 @@ type Versions struct {
 	SWEbenchPro       SWEbenchProVersions       `json:"swebenchpro"`
 	OpenClaw          OpenClawVersions          `json:"openclaw"`
 	Hermes            HermesVersions            `json:"hermes"`
+	ClaudeCode        ClaudeCodeVersions        `json:"claudecode"`
+}
+
+// ClaudeCodeVersions names the locally built Claude Code image. Anthropic does
+// not publish a registry image for the CLI.
+type ClaudeCodeVersions struct {
+	Image string `json:"image"`
 }
 
 type TerminalBench2Versions struct {
@@ -662,8 +672,8 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%s is required", check.name)
 		}
 	}
-	if c.Runtime.Backend != "deepseek" && c.Runtime.Backend != "sglang" && c.Runtime.Backend != "openai" {
-		return errors.New("runtime.backend must be deepseek, sglang, or openai")
+	if c.Runtime.Backend != "deepseek" && c.Runtime.Backend != "sglang" && c.Runtime.Backend != "openai" && c.Runtime.Backend != "anthropic" {
+		return errors.New("runtime.backend must be deepseek, sglang, openai, or anthropic")
 	}
 	if c.Harness.Mode == "" {
 		c.Harness.Mode = "agent"
@@ -1064,7 +1074,7 @@ func parseOptionalPositiveDuration(name, value string) (time.Duration, error) {
 
 func (c *RuntimeConfig) validate() error {
 	switch c.Backend {
-	case "deepseek", "openai":
+	case "deepseek", "openai", "anthropic":
 		if c.Mode != "external" {
 			return fmt.Errorf("runtime.backend %s requires external mode", c.Backend)
 		}
@@ -1074,7 +1084,7 @@ func (c *RuntimeConfig) validate() error {
 		return nil
 	case "sglang":
 	default:
-		return errors.New("runtime.backend must be deepseek, sglang, or openai")
+		return errors.New("runtime.backend must be deepseek, sglang, openai, or anthropic")
 	}
 	switch c.Mode {
 	case "external":
@@ -1194,6 +1204,11 @@ func (c Versions) validate() error {
 			return fmt.Errorf("hermes.image: %w", err)
 		}
 	}
+	if strings.TrimSpace(c.ClaudeCode.Image) != "" {
+		if err := containerimage.ValidatePinnedTagOnly(c.ClaudeCode.Image); err != nil {
+			return fmt.Errorf("claudecode.image: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -1207,6 +1222,8 @@ func (c Versions) HarnessImage(harnessType string) (string, error) {
 		image, field = c.OpenClaw.Image, "openclaw.image"
 	case "hermes":
 		image, field = c.Hermes.Image, "hermes.image"
+	case "claude-code":
+		image, field = c.ClaudeCode.Image, "claudecode.image"
 	default:
 		return "", fmt.Errorf("unsupported harness type %q", harnessType)
 	}

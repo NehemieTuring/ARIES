@@ -15,6 +15,13 @@ executed-command records and lossless wire-side input follow the
 access ownership and revocation follow its
 [lifecycle contract](../design/bridge.md#lifecycle-cancellation-and-failure).
 
+## Claude Code SSH bridge
+
+The Claude Code pairing is a third adapter. The harness replaces `/bin/bash`
+and forwards each invocation as one SSH exec. File operations use a separate
+`aries-fileop` command decoded by the same bridge. The listener binds
+`BridgeListen.BindHost` and advertises `AdvertiseHost`.
+
 ## Hermes SSH bridge
 
 The Hermes pairing is a second, separate adapter rather than a reuse of the

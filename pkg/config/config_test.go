@@ -730,6 +730,9 @@ func TestVersionsRequireOnlyTheSelectedHarnessImage(t *testing.T) {
 	if _, err := versions.HarnessImage("hermes"); err == nil {
 		t.Fatal("missing hermes.image was accepted for the hermes harness")
 	}
+	if _, err := versions.HarnessImage("claude-code"); err == nil {
+		t.Fatal("missing claudecode.image was accepted for the claude-code harness")
+	}
 	if _, err := versions.HarnessImage("nope"); err == nil {
 		t.Fatal("unknown harness type was accepted")
 	}

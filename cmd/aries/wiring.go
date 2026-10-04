@@ -45,21 +45,21 @@ func validateComponents(cfg config.Config) error {
 	default:
 		return fmt.Errorf("unsupported benchmark type %q", cfg.Benchmark.Type)
 	}
-	switch cfg.Harness.Type {
-	case "openclaw":
-	case "hermes":
-	default:
+	pairedBridge := map[string]string{
+		"openclaw":    "openclaw-ssh",
+		"hermes":      "hermes-ssh",
+		"claude-code": "claude-code-ssh",
+	}
+	want, ok := pairedBridge[cfg.Harness.Type]
+	if !ok {
 		return fmt.Errorf("unsupported harness type %q", cfg.Harness.Type)
 	}
 	switch cfg.Bridge.Type {
-	case "openclaw-ssh":
-	case "hermes-ssh":
+	case "openclaw-ssh", "hermes-ssh", "claude-code-ssh":
 	default:
 		return fmt.Errorf("unsupported bridge type %q", cfg.Bridge.Type)
 	}
-	// Each bridge speaks one harness's SSH grammar, so the pair is checked
-	// here rather than left to fail at the first tool call.
-	if (cfg.Harness.Type == "hermes") != (cfg.Bridge.Type == "hermes-ssh") {
+	if cfg.Bridge.Type != want {
 		return fmt.Errorf("harness type %q requires its paired bridge, not %q", cfg.Harness.Type, cfg.Bridge.Type)
 	}
 	return nil
@@ -69,7 +69,7 @@ func prepareBackend(cfg config.Config, outputDir string) (app.PreparedBackend, e
 	switch cfg.Runtime.Mode {
 	case "external":
 		switch cfg.Runtime.Backend {
-		case "deepseek", "openai", "sglang":
+		case "deepseek", "openai", "sglang", "anthropic":
 			return app.PreparedBackend{Model: cfg.CoreModel()}, nil
 		default:
 			return app.PreparedBackend{}, fmt.Errorf("unsupported model runtime backend %q", cfg.Runtime.Backend)
@@ -129,6 +129,8 @@ func newHarness(cfg config.Config, outputRoot string, lookup func(string) ([]byt
 		return harnesswiring.NewOpenClaw(cfg, outputRoot, lookup, logger, transport)
 	case "hermes":
 		return harnesswiring.NewHermes(cfg, outputRoot, lookup, logger, transport)
+	case "claude-code":
+		return harnesswiring.NewClaudeCode(cfg, outputRoot, lookup, logger, transport)
 	default:
 		return app.HarnessInstance{}, errors.Join(fmt.Errorf("unsupported harness type %q", cfg.Harness.Type), transport.Close())
 	}
@@ -159,6 +161,8 @@ func newBridge(cfg config.Config, outputRoot string, resolveListen func(context.
 		return bridgewiring.NewOpenClaw(cfg, outputRoot, resolveListen, logger)
 	case "hermes-ssh":
 		return bridgewiring.NewHermes(cfg, outputRoot, resolveListen, logger)
+	case "claude-code-ssh":
+		return bridgewiring.NewClaudeCode(cfg, outputRoot, resolveListen, logger)
 	default:
 		return nil, fmt.Errorf("unsupported bridge type %q", cfg.Bridge.Type)
 	}

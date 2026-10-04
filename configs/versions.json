@@ -22,5 +22,8 @@
   },
   "hermes": {
     "image": "docker.io/nousresearch/hermes-agent:v2026.8.31"
+  },
+  "claudecode": {
+    "image": "aries-claudecode:2.1.245"
   }
 }

@@ -45,3 +45,5 @@ DEEPSEEK.key
 
 # Deep Research Sandbox Dockerfile
 images/**
+!images/claudecode/
+!images/claudecode/Dockerfile
