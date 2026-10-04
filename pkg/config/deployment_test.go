@@ -35,6 +35,9 @@ func TestDeploymentDecodeAndValidation(t *testing.T) {
 		{"legacy compatible", `{"backend":"docker"}`, `{"type":"docker","deployment":{"backend":"docker"}}`, "embedded", ""},
 		{"legacy conflict", `{}`, `{"type":"docker","deployment":{"backend":"kubernetes"}}`, "embedded", "sandbox.type"},
 		{"unknown legacy", `{}`, `{"type":"other"}`, "embedded", "sandbox.type"},
+		{"sandlock sandbox", `{"backend":"docker"}`, `{"deployment":{"backend":"sandlock"}}`, "embedded", ""},
+		{"legacy sandlock", `{}`, `{"type":"sandlock"}`, "embedded", ""},
+		{"sandlock docker settings", `{}`, `{"deployment":{"backend":"sandlock","docker":{"socket":"/var/run/docker.sock"}}}`, "embedded", "sandlock does not use"},
 		{"unknown backend", `{"backend":"remote"}`, `{}`, "embedded", "harness.deployment.backend"},
 		{"missing backend", `{"docker":{}}`, `{}`, "embedded", "harness.deployment.backend"},
 		{"wrong Docker block", `{"backend":"kubernetes","docker":{}}`, `{}`, "embedded", "harness.deployment.docker"},
@@ -67,6 +70,15 @@ func TestDeploymentDecodeAndValidation(t *testing.T) {
 			}
 			if tc.name == "independent Kubernetes" && (cfg.Harness.Deployment.Kubernetes.RuntimeClassName != "kata" || cfg.Sandbox.Deployment.Backend != "docker") {
 				t.Fatalf("independent settings lost: %#v", cfg)
+			}
+			if tc.name == "sandlock sandbox" || tc.name == "legacy sandlock" {
+				if cfg.Sandbox.Deployment.Backend != "sandlock" || cfg.Sandbox.Deployment.Docker != nil || cfg.Harness.Deployment.Backend != "docker" || cfg.Sandbox.Type != "" {
+					t.Fatalf("sandlock normalization: %#v", cfg)
+				}
+				before := cfg
+				if err := cfg.NormalizeDeployment(); err != nil || !reflect.DeepEqual(before, cfg) {
+					t.Fatalf("sandlock not idempotent: %v", err)
+				}
 			}
 		})
 	}

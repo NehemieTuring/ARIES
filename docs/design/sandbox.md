@@ -53,6 +53,23 @@ command without stopping the sandbox needed for evaluation. Transfer limits,
 private artifacts, and missing-file semantics are part of the isolation boundary.
 [Docker mechanisms](../implementation/docker.md) explain the current realization.
 
+## Sandlock
+
+`sandbox.deployment.backend` may be `sandlock`. The harness stays on Docker.
+Sandlock runs each task command as a host process under Landlock and seccomp,
+inside a private root copied from the task image. Linux 6.12 or newer is
+required. A kernel that cannot enforce Landlock fails the run. There is no
+Docker fallback for task commands.
+
+The host must provide `pkg-config`, `libsandlock_ffi`, and `gcc` when a
+Sandlock sandbox starts. The copied root is not a container. The process keeps
+the invoking user. A helper container copies the image and installs curl and
+uv; it is not the tool sandbox. Task commands do not join the harness network.
+The bridge address for a Sandlock task is `127.0.0.1`.
+
+`ARIES_SANDBOX_TYPE=sandlock` selects this backend over the profile. The
+process environment wins over the repository-root `.env`.
+
 ## Substitution and validation
 
 A replacement must preserve task identity, isolation, live evaluation, command

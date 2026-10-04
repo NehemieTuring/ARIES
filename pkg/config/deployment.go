@@ -31,7 +31,13 @@ type KubernetesDeploymentConfig struct {
 // It does no I/O and also supports configurations constructed by command callers.
 // Calling it repeatedly preserves the normalized configuration.
 func (c *Config) NormalizeDeployment() error {
-	if c.Sandbox.Type != "" && c.Sandbox.Type != "docker" {
+	if c.Sandbox.Type == "sandlock" {
+		if c.Sandbox.Deployment.Backend != "" && c.Sandbox.Deployment.Backend != "sandlock" {
+			return fmt.Errorf("sandbox.type conflicts with sandbox.deployment.backend %q", c.Sandbox.Deployment.Backend)
+		}
+		c.Sandbox.Deployment.Backend = "sandlock"
+	}
+	if c.Sandbox.Type != "" && c.Sandbox.Type != "docker" && c.Sandbox.Type != "sandlock" {
 		return fmt.Errorf("sandbox.type: unsupported legacy value %q", c.Sandbox.Type)
 	}
 	if c.Sandbox.Type == "docker" && c.Sandbox.Deployment.Backend != "" && c.Sandbox.Deployment.Backend != "docker" {
@@ -40,7 +46,11 @@ func (c *Config) NormalizeDeployment() error {
 	if err := c.Harness.Deployment.normalize("harness.deployment"); err != nil {
 		return err
 	}
-	if err := c.Sandbox.Deployment.normalize("sandbox.deployment"); err != nil {
+	if c.Sandbox.Deployment.Backend == "sandlock" {
+		if c.Sandbox.Deployment.Docker != nil || c.Sandbox.Deployment.Kubernetes != nil {
+			return fmt.Errorf("sandbox.deployment: sandlock does not use docker or kubernetes settings")
+		}
+	} else if err := c.Sandbox.Deployment.normalize("sandbox.deployment"); err != nil {
 		return err
 	}
 	if c.Harness.Deployment.Backend == "docker" && c.Sandbox.Deployment.Backend == "docker" && c.Harness.Deployment.Docker.Socket != c.Sandbox.Deployment.Docker.Socket {

@@ -145,6 +145,8 @@ func newSandbox(cfg config.Config, outputRoot, runID, occurrenceID string, gpuIn
 			return app.SandboxInstance{}, err
 		}
 		return sandboxwiring.New(outputRoot, occurrenceID, gpuIndices, logger, transport, transport.NewTaskEnvironment, resources)
+	case "sandlock":
+		return sandboxwiring.NewSandlock(cfg, outputRoot, occurrenceID, gpuIndices, logger)
 	default:
 		return app.SandboxInstance{}, fmt.Errorf("unsupported sandbox.deployment.backend %q", cfg.Sandbox.Deployment.Backend)
 	}
@@ -195,21 +197,26 @@ func validateDeployment(cfg *config.Config) error {
 	if err := cfg.NormalizeDeployment(); err != nil {
 		return err
 	}
-	for _, component := range []struct {
-		path      string
-		placement config.DeploymentConfig
-	}{
-		{"harness.deployment", cfg.Harness.Deployment}, {"sandbox.deployment", cfg.Sandbox.Deployment},
-	} {
-		switch component.placement.Backend {
-		case "docker":
-		case "kubernetes":
-			return fmt.Errorf("%s: Kubernetes deployment is not implemented", component.path)
-		default:
-			return fmt.Errorf("%s: unsupported backend %q", component.path, component.placement.Backend)
-		}
+	if err := validatePlacement("harness.deployment", cfg.Harness.Deployment, false); err != nil {
+		return err
 	}
-	return nil
+	return validatePlacement("sandbox.deployment", cfg.Sandbox.Deployment, true)
+}
+
+func validatePlacement(path string, placement config.DeploymentConfig, allowSandlock bool) error {
+	switch placement.Backend {
+	case "docker":
+		return nil
+	case "sandlock":
+		if allowSandlock {
+			return nil
+		}
+		return fmt.Errorf("%s: unsupported backend %q", path, placement.Backend)
+	case "kubernetes":
+		return fmt.Errorf("%s: Kubernetes deployment is not implemented", path)
+	default:
+		return fmt.Errorf("%s: unsupported backend %q", path, placement.Backend)
+	}
 }
 
 func newDeployment(cfg config.DeploymentConfig, logger *logrus.Logger) (deployment.Deployment, error) {
@@ -231,6 +238,11 @@ func pullImages(ctx context.Context, cfg config.Config, images []string) error {
 	switch cfg.Sandbox.Deployment.Backend {
 	case "docker":
 		return deploymentwiring.PullDockerImages(ctx, cfg.Sandbox.Deployment, images)
+	case "sandlock":
+		if cfg.Harness.Deployment.Backend != "docker" {
+			return errors.New("sandlock image preparation requires the harness Docker daemon")
+		}
+		return deploymentwiring.PullDockerImages(ctx, cfg.Harness.Deployment, images)
 	default:
 		return fmt.Errorf("unsupported image preparation backend %q", cfg.Sandbox.Deployment.Backend)
 	}

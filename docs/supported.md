@@ -1,7 +1,8 @@
 # Supported implementations
 
-**Harnesses and tool sandboxes currently require the same local Docker daemon.**
-Remote Docker servers and mixed deployment backends are not supported. See the
+**Harnesses currently require the local Docker daemon.** The tool sandbox uses
+that same daemon, except for Sandlock. Remote Docker servers and other mixed
+deployment backends are not supported. See the
 [deployment configuration](configuration.md#deployment-configuration) for socket
 settings and supported topology.
 
@@ -21,6 +22,7 @@ This page summarizes capabilities and limitations. Use the
 | Benchmark | **SWE-Atlas QA** — codebase Q&A with host-side rubric grading; grading can be disabled; only the QA track is implemented | [Benchmark guide](benchmarks/swe-atlas-qa.md) |
 | Benchmark | **SWE-bench Pro** — public issue-resolution split with pinned task scripts and parser | [Benchmark guide](benchmarks/swe-bench-pro.md) |
 | Tool sandbox and deployment | **Docker** — local containers managed through the Moby Go SDK | [Deployment configuration](configuration.md#deployment-configuration), [Docker implementation](implementation/docker.md) |
+| Tool sandbox | **Sandlock** — host processes under Landlock and seccomp. Linux 6.12 or newer, `pkg-config`, `libsandlock_ffi`, and host `gcc` are required. There is no Docker fallback for task commands. The harness stays on Docker, and a helper container only copies the task image. | [Tool sandbox](design/sandbox.md#sandlock) |
 | Tool bridge | **OpenClaw SSH** and **Hermes SSH** — embedded, harness-specific adapters | [SSH bridge implementation](implementation/ssh-bridges.md) |
 | Model service | **DeepSeek** — external endpoint | [Model backends](configuration.md#model-backends) |
 | Model service | **SGLang** — external endpoint or one ARIES-managed host process per run | [Model backends](configuration.md#model-backends) |
@@ -46,6 +48,7 @@ guides above.
   server-specific extension.
 - SWE-bench Pro has additional image-architecture, isolation, and licensing
   requirements; consult its [benchmark guide](benchmarks/swe-bench-pro.md).
+- Sandlock requires Linux 6.12 or newer, `pkg-config`, `libsandlock_ffi` for every build, and host `gcc` when a sandbox starts. A musl task image may fail to load the host `realpath` preload. Task commands keep the invoking user and do not join the harness network.
 - Measurement availability and deployment portability have known gaps described
   in the [design principles](design.md#measurement-meaning-and-current-gaps). These limits
   matter when comparing runs across implementations.
@@ -56,7 +59,8 @@ Kubernetes deployment and a shared gRPC sandbox protocol with E2B compatibility
 are planned targets, **not currently supported capabilities**. E2B compatibility
 is a target, not a specified or verified API/version contract, and does not imply
 support in every harness. Kubernetes placement is recognized by configuration
-but rejected before runtime effects. Docker is the current deployment provider;
+but rejected before runtime effects. Docker is the harness deployment provider.
+The tool sandbox is Docker or Sandlock.
 bridges currently run embedded and use pair-specific SSH protocols.
 
 See the [deployment contract](design/deployment.md),

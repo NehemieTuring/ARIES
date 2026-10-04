@@ -8,6 +8,7 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/moby/moby/api v1.56.0
 	github.com/moby/moby/client v0.6.0
+	github.com/multikernel/sandlock/go v0.8.8
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/sirupsen/logrus v1.10.0

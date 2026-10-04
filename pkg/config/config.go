@@ -381,8 +381,22 @@ type VoiceSTTConfig struct {
 
 type SandboxConfig struct {
 	// Type accepts the legacy Docker selector during normalization.
-	Type       string           `json:"type,omitempty"`
-	Deployment DeploymentConfig `json:"deployment,omitempty"`
+	// "sandlock" is also accepted and becomes deployment.backend sandlock.
+	Type       string                `json:"type,omitempty"`
+	Deployment DeploymentConfig      `json:"deployment,omitempty"`
+	Sandlock   SandlockSandboxConfig `json:"sandlock,omitempty"`
+}
+
+// SandlockSandboxConfig applies only when sandbox.deployment.backend is sandlock.
+// NetAllow replaces the task network mapping when the field is present.
+// An empty array denies outbound traffic. An omitted field keeps the task
+// AllowNetwork mapping.
+type SandlockSandboxConfig struct {
+	NetAllow      []string `json:"net_allow,omitempty"`
+	FSDenied      []string `json:"fs_denied,omitempty"`
+	MaxProcesses  uint32   `json:"max_processes,omitempty"`
+	MaxOpenFiles  uint32   `json:"max_open_files,omitempty"`
+	MaxCPUPercent uint8    `json:"max_cpu_percent,omitempty"`
 }
 
 type BridgeConfig struct {

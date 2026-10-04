@@ -4,6 +4,7 @@ PROFILE ?= profiles/openclaw-tb2-fix-git-deepseek.json
 
 export GOCACHE ?= $(CURDIR)/.cache/go-build
 export GOMODCACHE ?= $(CURDIR)/.cache/go-mod
+export LD_LIBRARY_PATH := $(CURDIR)/.cache/sandlock-prefix/lib$(if $(LD_LIBRARY_PATH),:$(LD_LIBRARY_PATH))
 
 build:
 	mkdir -p bin
