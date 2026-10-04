@@ -457,6 +457,17 @@ func TestRenderConfigMapsOpenAICompatibleBackendsToCustomProvider(t *testing.T) 
 	if !strings.Contains(string(rendered), `provider: "deepseek"`) || hermesProvider("deepseek") != "deepseek" {
 		t.Fatal("deepseek provider was rewritten")
 	}
+	gemini := validModel()
+	gemini.Provider = "gemini"
+	gemini.BaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
+	rendered, err = renderConfig(gemini, renderSettings{maxTurns: 10, webSearchEnabled: false, extractEnabled: false, subagentsEnabled: true, maxConcurrentSubagents: 0}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(rendered)
+	if !strings.Contains(text, `provider: "gemini"`) || !strings.Contains(text, gemini.BaseURL) {
+		t.Fatalf("gemini provider was rewritten:\n%s", text)
+	}
 }
 
 func TestRenderConfig_MCPServers(t *testing.T) {

@@ -206,8 +206,8 @@ func renderConfig(model core.ModelConfig, endpoint core.ToolEndpoint, mode strin
 	// "aries" id so the entry never collides with a built-in provider of the
 	// same name; SGLang keeps its own id.
 	providerID := "aries"
-	if model.Provider == "sglang" {
-		providerID = "sglang"
+	if model.Provider == "sglang" || model.Provider == "gemini" {
+		providerID = model.Provider
 	}
 	configuration := openClawConfig{
 		Gateway: gatewayConfig{
@@ -330,8 +330,8 @@ func denyToolList(subagentsEnabled bool) []string {
 }
 
 func validateModel(model core.ModelConfig) error {
-	if model.Provider != "deepseek" && !openAICompatible(model.Provider) {
-		return errors.New("OpenClaw model provider must be deepseek, sglang, or openai")
+	if model.Provider != "deepseek" && model.Provider != "gemini" && !openAICompatible(model.Provider) {
+		return errors.New("OpenClaw model provider must be deepseek, sglang, openai, or gemini")
 	}
 	if openAICompatible(model.Provider) {
 		if _, err := normalizeV1BaseURL(model.BaseURL); err != nil {

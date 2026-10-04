@@ -100,6 +100,28 @@ func TestRenderConfigSetsRealtimeConsultRoutingOnlyForRealtimeMode(t *testing.T)
 	}
 }
 
+func TestRenderConfigKeepsGeminiProviderID(t *testing.T) {
+	model := testModel()
+	model.Provider = "gemini"
+	model.BaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
+	model.Model = "gemini-2.5-flash"
+	content, err := renderConfig(model, testEndpoint(), ModeAgent, false, false, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var configuration openClawConfig
+	if err := json.Unmarshal(content, &configuration); err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := configuration.Models.Providers["gemini"]
+	if !ok || provider.API != "openai-completions" || provider.BaseURL != model.BaseURL || configuration.Agents.Defaults.Model.Primary != "gemini/gemini-2.5-flash" {
+		t.Fatalf("gemini provider = %#v primary = %q", provider, configuration.Agents.Defaults.Model.Primary)
+	}
+	if _, renamed := configuration.Models.Providers["aries"]; renamed {
+		t.Fatal("gemini was renamed to the deepseek provider id")
+	}
+}
+
 func TestRenderConfigNormalizesAndStrictlyValidatesSGLangBaseURL(t *testing.T) {
 	model := testModel()
 	model.Provider = "sglang"

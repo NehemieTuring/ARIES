@@ -69,7 +69,7 @@ func prepareBackend(cfg config.Config, outputDir string) (app.PreparedBackend, e
 	switch cfg.Runtime.Mode {
 	case "external":
 		switch cfg.Runtime.Backend {
-		case "deepseek", "openai", "sglang":
+		case "deepseek", "openai", "sglang", "gemini":
 			return app.PreparedBackend{Model: cfg.CoreModel()}, nil
 		default:
 			return app.PreparedBackend{}, fmt.Errorf("unsupported model runtime backend %q", cfg.Runtime.Backend)

@@ -25,6 +25,7 @@ This page summarizes capabilities and limitations. Use the
 | Model service | **DeepSeek** — external endpoint | [Model backends](configuration.md#model-backends) |
 | Model service | **SGLang** — external endpoint or one ARIES-managed host process per run | [Model backends](configuration.md#model-backends) |
 | Model service | **OpenAI-compatible server** — external only, including vLLM, llama.cpp, gateways, and hosted endpoints | [Model backends](configuration.md#model-backends) |
+| Model service | **Gemini** — external OpenAI-compatible endpoint. The profile base URL stays `https://generativelanguage.googleapis.com/v1beta/openai`. | [Gemini](configuration.md#external-gemini) |
 
 Image and dataset revisions are pinned in [versions.json](../configs/versions.json).
 Runnable combinations are provided in [profiles/](../profiles/); benchmark setup,

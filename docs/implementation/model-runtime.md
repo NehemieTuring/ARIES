@@ -4,7 +4,8 @@ This page describes the concrete mechanisms behind the
 [model runtime contract](../design/runtime.md).
 
 DeepSeek is supported only as an external OpenAI-compatible endpoint, with
-bounded model validation. The `openai` backend names any other OpenAI-compatible
+bounded model validation. Gemini is a separate external backend for Google's
+OpenAI-compatible endpoint. Its base URL is not rewritten to `/v1`. The `openai` backend names any other OpenAI-compatible
 server, such as vLLM. It
 describes the endpoint's API rather than a distinct runtime: it is external
 only, has no native configuration file, adds no preparation step, and receives

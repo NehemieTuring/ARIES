@@ -44,13 +44,15 @@ const (
 )
 
 // hermesProvider maps the profile's runtime backend onto a provider name
-// Hermes accepts. "deepseek" is a built-in Hermes provider. Neither pinned
+// Hermes accepts. "deepseek" and "gemini" keep their names. Neither pinned
 // Hermes version knows "sglang" or a plain "openai" provider
 // (hermes_cli/auth.py PROVIDER_REGISTRY), and the one-shot rejects an unknown
 // name before any request is made. The generic "custom" provider is the one
-// that routes to model.base_url with the configured key, so every
-// OpenAI-compatible backend renders as "custom". The same value is passed to
-// the one-shot as --provider, so the wrapper and the config never disagree.
+// that routes to model.base_url with the configured key, so those
+// OpenAI-compatible backends render as "custom". Gemini keeps the profile
+// base URL, which is not the /v1 prefix those backends require. The same
+// value is passed to the one-shot as --provider, so the wrapper and the
+// config never disagree.
 func hermesProvider(backend string) string {
 	if openAICompatible(backend) {
 		return "custom"
@@ -461,8 +463,8 @@ export ` + hostVar + `
 }
 
 func validateModel(model core.ModelConfig) error {
-	if model.Provider != "deepseek" && !openAICompatible(model.Provider) {
-		return errors.New("Hermes model provider must be deepseek, sglang, or openai")
+	if model.Provider != "deepseek" && model.Provider != "gemini" && !openAICompatible(model.Provider) {
+		return errors.New("Hermes model provider must be deepseek, sglang, openai, or gemini")
 	}
 	if openAICompatible(model.Provider) {
 		if _, err := normalizeV1BaseURL(model.BaseURL); err != nil {

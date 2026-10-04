@@ -1,0 +1,46 @@
+{
+  "name": "openclaw-tb2-fix-git-gemini",
+  "versions_file": "../configs/versions.json",
+  "overrides_file": "",
+  "execution": {
+    "concurrency": 1
+  },
+  "benchmark": {
+    "type": "terminalbench2",
+    "root": ".cache/terminal-bench-2-1",
+    "tasks": [
+      "fix-git"
+    ]
+  },
+  "harness": {
+    "type": "openclaw",
+    "deployment": {
+      "backend": "docker",
+      "docker": {
+        "socket": "/var/run/docker.sock"
+      }
+    }
+  },
+  "sandbox": {
+    "deployment": {
+      "backend": "docker",
+      "docker": {
+        "socket": "/var/run/docker.sock"
+      }
+    }
+  },
+  "bridge": {
+    "type": "openclaw-ssh",
+    "mode": "embedded"
+  },
+  "runtime": {
+    "backend": "gemini",
+    "mode": "external"
+  },
+  "model": {
+    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "api_key_env": "GEMINI_API_KEY",
+    "id": "gemini-3.5-flash-lite"
+  },
+  "output_dir": "runs"
+}

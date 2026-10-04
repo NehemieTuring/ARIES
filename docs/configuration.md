@@ -261,8 +261,9 @@ are:
 | `sglang` | `external` | Optional `file` accepted but ignored | User |
 | `sglang` | `managed` | `file`, `executable`, `startup_timeout`, `stop_timeout` | ARIES |
 | `openai` | `external` | Must be omitted | User |
+| `gemini` | `external` | Must be omitted | Google |
 
-DeepSeek and `openai` are external only. SGLang supports both modes.
+DeepSeek, `openai`, and `gemini` are external only. SGLang supports both modes.
 
 HTTP model endpoints are a trusted-local exception. The checked-in HTTP
 examples use the non-secret `unused-local-token` placeholder and are suitable
@@ -388,6 +389,27 @@ credential:
 ```sh
 export SGLANG_API_KEY=unused-local-token
 ./bin/aries .cache/openclaw-tb2-fix-git-sglang.json
+```
+
+### External Gemini
+
+Gemini is external only. OpenClaw and Hermes keep the provider name `gemini`
+and the profile base URL. That URL is Google's OpenAI-compatible endpoint and
+is not rewritten to `/v1`. Preflight lists models at that endpoint and accepts
+either `gemini-2.5-flash` or `models/gemini-2.5-flash` as the same model.
+Set `GEMINI_API_KEY` in the process environment. Checked-in profiles:
+`profiles/openclaw-tb2-fix-git-gemini.json` and
+`profiles/hermes-tb2-fix-git-gemini.json`.
+
+```json
+{
+  "runtime": { "backend": "gemini", "mode": "external" },
+  "model": {
+    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "api_key_env": "GEMINI_API_KEY",
+    "id": "gemini-3.5-flash-lite"
+  }
+}
 ```
 
 ### External OpenAI-compatible server

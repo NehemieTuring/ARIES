@@ -23,6 +23,9 @@ const (
 	deepSeekRetryDelay       = 2 * time.Second
 	deepSeekMaxAttempts      = 2
 	deepSeekMaxResponseBytes = 64 << 10
+	geminiBaseURL            = "https://generativelanguage.googleapis.com/v1beta/openai"
+	geminiModelsURL          = geminiBaseURL + "/models"
+	geminiRequestTimeout     = 10 * time.Second
 	managedStartupRetryDelay = time.Second
 )
 
@@ -90,6 +93,10 @@ func validateLiveModel(
 			return liveValidationFailure(model, liveValidationConfigurationInvalid, 0)
 		}
 	case "sglang", "openai":
+	case "gemini":
+		if !isOfficialGemini(model) {
+			return liveValidationFailure(model, liveValidationConfigurationInvalid, 0)
+		}
 	default:
 		return liveValidationFailure(model, liveValidationConfigurationInvalid, 0)
 	}
@@ -107,6 +114,9 @@ func validateLiveModel(
 	}
 	if model.Provider == "sglang" || model.Provider == "openai" {
 		return validateOpenAICompatibleModel(ctx, model, key, client)
+	}
+	if model.Provider == "gemini" {
+		return validateGeminiModel(ctx, model, key, client)
 	}
 	if client == nil {
 		client = newDeepSeekHTTPClient()
@@ -297,6 +307,91 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func validateGeminiModel(ctx context.Context, model core.ModelConfig, key []byte, doer httpDoer) (liveValidation, error) {
+	client := doer
+	if client == nil {
+		client = &http.Client{Timeout: geminiRequestTimeout, CheckRedirect: refuseRedirects}
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, geminiRequestTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, geminiModelsURL, nil)
+	if err != nil {
+		return liveValidationFailure(model, liveValidationConfigurationInvalid, 0)
+	}
+	request.Header.Set("Authorization", "Bearer "+string(key))
+	request.Header.Set("Accept", "application/json")
+	response, err := client.Do(request)
+	request.Header.Del("Authorization")
+	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if ctx.Err() != nil {
+			return liveValidationFailure(model, liveValidationCanceled, 1)
+		}
+		return liveValidationFailure(model, liveValidationTransport, 1)
+	}
+	if response == nil {
+		return liveValidationFailure(model, liveValidationTransport, 1)
+	}
+	body, bodyErr := readBoundedResponse(response.Body)
+	if response.Body != nil {
+		_ = response.Body.Close()
+	}
+	defer clear(body)
+	switch response.StatusCode {
+	case http.StatusInternalServerError, http.StatusServiceUnavailable:
+		return liveValidationFailure(model, liveValidationServer, 1)
+	case http.StatusUnauthorized:
+		return liveValidationFailure(model, liveValidationUnauthorized, 1)
+	case http.StatusForbidden:
+		return liveValidationFailure(model, liveValidationForbidden, 1)
+	case http.StatusTooManyRequests:
+		return liveValidationFailure(model, liveValidationRateLimited, 1)
+	}
+	if response.StatusCode >= 300 && response.StatusCode < 400 {
+		return liveValidationFailure(model, liveValidationRedirect, 1)
+	}
+	if response.StatusCode != http.StatusOK {
+		return liveValidationFailure(model, liveValidationHTTP, 1)
+	}
+	if bodyErr != nil {
+		if errors.Is(bodyErr, errResponseTooLarge) {
+			return liveValidationFailure(model, liveValidationResponseTooLarge, 1)
+		}
+		return liveValidationFailure(model, liveValidationResponseRead, 1)
+	}
+	var models struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &models); err != nil {
+		return liveValidationFailure(model, liveValidationMalformed, 1)
+	}
+	for _, candidate := range models.Data {
+		if geminiModelListed(candidate.ID, model.Model) {
+			return liveValidation{
+				SchemaVersion: 1, Status: liveValidationSucceeded, Category: liveValidationConfirmed,
+				Provider: "gemini", BaseURL: model.BaseURL, Model: model.Model, Attempts: 1,
+			}, nil
+		}
+	}
+	return liveValidationFailure(model, liveValidationModelMissing, 1)
+}
+
+func geminiModelListed(listed, configured string) bool {
+	return listed == configured || listed == "models/"+configured || configured == "models/"+listed
+}
+
+func isOfficialGemini(model core.ModelConfig) bool {
+	return model.Provider == "gemini" && model.BaseURL == geminiBaseURL
+}
+
+func refuseRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 func isOfficialDeepSeek(model core.ModelConfig) bool {

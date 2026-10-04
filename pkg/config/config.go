@@ -662,8 +662,8 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%s is required", check.name)
 		}
 	}
-	if c.Runtime.Backend != "deepseek" && c.Runtime.Backend != "sglang" && c.Runtime.Backend != "openai" {
-		return errors.New("runtime.backend must be deepseek, sglang, or openai")
+	if c.Runtime.Backend != "deepseek" && c.Runtime.Backend != "sglang" && c.Runtime.Backend != "openai" && c.Runtime.Backend != "gemini" {
+		return errors.New("runtime.backend must be deepseek, sglang, openai, or gemini")
 	}
 	if c.Harness.Mode == "" {
 		c.Harness.Mode = "agent"
@@ -1064,7 +1064,7 @@ func parseOptionalPositiveDuration(name, value string) (time.Duration, error) {
 
 func (c *RuntimeConfig) validate() error {
 	switch c.Backend {
-	case "deepseek", "openai":
+	case "deepseek", "openai", "gemini":
 		if c.Mode != "external" {
 			return fmt.Errorf("runtime.backend %s requires external mode", c.Backend)
 		}
@@ -1074,7 +1074,7 @@ func (c *RuntimeConfig) validate() error {
 		return nil
 	case "sglang":
 	default:
-		return errors.New("runtime.backend must be deepseek, sglang, or openai")
+		return errors.New("runtime.backend must be deepseek, sglang, openai, or gemini")
 	}
 	switch c.Mode {
 	case "external":

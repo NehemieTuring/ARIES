@@ -49,7 +49,7 @@ They use explicit construction under `internal/app/wiring/runtime` and concrete
 service packages, rather than generic registration.
 
 The [implementation guide](../implementation/model-runtime.md) explains current
-DeepSeek/OpenAI-compatible endpoint preparation, SGLang process management,
+DeepSeek, Gemini, and OpenAI-compatible endpoint preparation, SGLang process management,
 prewarm behavior, and transport limitations. The [quick start](../quick-start.md)
 contains user configuration and commands. [Runtime tests](../../internal/app/runtime_test.go)
 cover health retry classification, exit races, and cancellation-independent cleanup;
