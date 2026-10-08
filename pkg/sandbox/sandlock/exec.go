@@ -123,6 +123,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 	pending := 2
 	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
+drainCopies:
 	for pending > 0 {
 		select {
 		case <-copyErr:
@@ -130,10 +131,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, command core.Command, stdin io
 		case <-timer.C:
 			_ = proc.Stdout.Close()
 			_ = proc.Stderr.Close()
-			for pending > 0 {
-				<-copyErr
-				pending--
-			}
+			break drainCopies
 		}
 	}
 	ended := time.Now()

@@ -1413,6 +1413,17 @@ func TestDeploymentReceivesRuntimeConstraintsAndSecretValidation(t *testing.T) {
 	}
 }
 
+func TestGatewayURLHostNetworkFollowsConcurrency(t *testing.T) {
+	active := &session{deploymentRequest: deployment.Request{Network: "host"}}
+	if _, err := (&Manager{concurrency: 2}).gatewayURL(context.Background(), active); err == nil || !strings.Contains(err.Error(), "concurrency") {
+		t.Fatalf("concurrent host network error = %v", err)
+	}
+	got, err := (&Manager{concurrency: 1}).gatewayURL(context.Background(), active)
+	if err != nil || got != "ws://127.0.0.1:18789" {
+		t.Fatalf("single host network URL = %q, %v", got, err)
+	}
+}
+
 func (*fakeDeployment) ExecStream(context.Context, string, core.Command, io.Reader, io.Writer, io.Writer) (core.CommandResult, error) {
 	return core.CommandResult{}, errors.New("unexpected harness streaming call")
 }

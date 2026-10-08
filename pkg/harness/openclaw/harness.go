@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,6 +64,7 @@ type Options struct {
 	SubagentsEnabled       bool
 	MaxConcurrentSubagents int
 	MCPServers             []core.MCPServerConfig
+	Concurrency            int
 	CleanupTimeout         time.Duration
 	StartTimeout           time.Duration
 	AgentTimeout           time.Duration
@@ -112,6 +114,7 @@ type Manager struct {
 	subagentsEnabled       bool
 	maxConcurrentSubagents int
 	mcpServers             []core.MCPServerConfig
+	concurrency            int
 	newID                  func() (string, error)
 	newGateway             func(string, []byte) (gatewayConnection, error)
 	newAgentGateway        func(string, []byte) (gatewayConnection, error)
@@ -248,7 +251,7 @@ func New(options Options) (*Manager, error) {
 		agentTimeout: options.AgentTimeout, logger: options.Logger,
 		apiKeyLookup: options.APIKeyLookup, mode: options.Mode, realtime: options.Realtime,
 		webSearchEnabled: options.WebSearchEnabled, extractAPIKeyEnv: options.ExtractAPIKeyEnv, subagentsEnabled: options.SubagentsEnabled,
-		maxConcurrentSubagents: options.MaxConcurrentSubagents, mcpServers: options.MCPServers, newID: randomID,
+		maxConcurrentSubagents: options.MaxConcurrentSubagents, mcpServers: options.MCPServers, concurrency: options.Concurrency, newID: randomID,
 		newGateway: func(rawURL string, token []byte) (gatewayConnection, error) {
 			return newGatewayClientWithDisposition(rawURL, token, gatewayScopes(options.Mode), gatewayEventDisposition(options.Mode))
 		},
@@ -745,6 +748,12 @@ func disablesThinking(model core.ModelConfig) bool {
 }
 
 func (manager *Manager) gatewayURL(ctx context.Context, active *session) (string, error) {
+	if active.deploymentRequest.Network == "host" {
+		if manager.concurrency > 1 {
+			return "", errors.New("OpenClaw host networking rejects execution.concurrency greater than 1")
+		}
+		return "ws://" + net.JoinHostPort("127.0.0.1", gatewayListenPort), nil
+	}
 	address, err := manager.deployment.Address(ctx, active.containerID, 18789)
 	if err != nil {
 		return "", fmt.Errorf("resolve OpenClaw gateway: %w", err)

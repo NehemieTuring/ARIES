@@ -458,7 +458,7 @@ func startSandbox(t *testing.T, environment core.Environment) *Sandbox {
 func startWithManager(t *testing.T, manager *Manager, environment core.Environment) runner.Sandbox {
 	t.Helper()
 	live, err := manager.Start(context.Background(), core.SandboxRequest{RunID: "run", TaskID: "task", Environment: environment})
-	if errors.Is(err, ErrUnsupportedKernel) {
+	if errors.Is(err, ErrUnsupportedKernel) || errors.Is(err, ErrUnavailable) {
 		t.Skipf("sandlock unavailable on this host: %v", err)
 	}
 	if err != nil {
