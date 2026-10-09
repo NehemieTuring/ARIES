@@ -94,6 +94,23 @@ func (doer *failingResponseDoer) Do(request *http.Request) (*http.Response, erro
 	return &http.Response{StatusCode: http.StatusOK, Body: doer.body, Request: request}, nil
 }
 
+type geminiPreflightDoer struct {
+	t    *testing.T
+	body string
+	err  error
+}
+
+func (doer *geminiPreflightDoer) Do(request *http.Request) (*http.Response, error) {
+	doer.t.Helper()
+	if request.Method != http.MethodGet || request.URL.String() != geminiModelsURL {
+		doer.t.Fatalf("request = %s %s", request.Method, request.URL)
+	}
+	if doer.err != nil {
+		return nil, doer.err
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(doer.body)), Request: request}, nil
+}
+
 func (doer *preflightDoer) Do(request *http.Request) (*http.Response, error) {
 	doer.t.Helper()
 	doer.requests++
@@ -441,6 +458,44 @@ func errString(err error) string {
 
 // A generic OpenAI-compatible server takes the same bounded /v1/models path as
 // SGLang, and the recorded provider stays the profile's backend name.
+func TestGeminiModelListedKeepsPrefixOnTheCatalogOnly(t *testing.T) {
+	for _, test := range []struct {
+		listed, configured string
+		want               bool
+	}{
+		{listed: "gemini-xxx", configured: "gemini-xxx", want: true},
+		{listed: "models/gemini-xxx", configured: "gemini-xxx", want: true},
+		{listed: "gemini-xxx", configured: "models/gemini-xxx", want: false},
+		{listed: "models/gemini-xxx", configured: "models/gemini-xxx", want: false},
+	} {
+		if got := geminiModelListed(test.listed, test.configured); got != test.want {
+			t.Fatalf("geminiModelListed(%q, %q) = %t, want %t", test.listed, test.configured, got, test.want)
+		}
+	}
+}
+
+func TestGeminiPreflightClassifiesRequestDeadlineAsCanceled(t *testing.T) {
+	model := core.ModelConfig{Provider: "gemini", BaseURL: geminiBaseURL, Model: "gemini-xxx", APIKeyEnv: "GEMINI_API_KEY"}
+	lookup := func(string) ([]byte, bool) { return []byte("synthetic-gemini-key"), true }
+	t.Run("deadline", func(t *testing.T) {
+		doer := &geminiPreflightDoer{t: t, err: context.DeadlineExceeded}
+		validation, err := validateLiveModel(context.Background(), model, lookup, doer, nil)
+		assertPreflightFailure(t, validation, err, liveValidationCanceled, 1)
+	})
+	t.Run("transport", func(t *testing.T) {
+		doer := &geminiPreflightDoer{t: t, err: errors.New("synthetic transport failure")}
+		validation, err := validateLiveModel(context.Background(), model, lookup, doer, nil)
+		assertPreflightFailure(t, validation, err, liveValidationTransport, 1)
+	})
+	t.Run("catalog prefix", func(t *testing.T) {
+		doer := &geminiPreflightDoer{t: t, body: `{"data":[{"id":"models/gemini-xxx"}]}`}
+		validation, err := validateLiveModel(context.Background(), model, lookup, doer, nil)
+		if err != nil || validation.Status != liveValidationSucceeded || validation.Category != liveValidationConfirmed || validation.Model != "gemini-xxx" {
+			t.Fatalf("validation=%+v err=%v", validation, err)
+		}
+	})
+}
+
 func TestOpenAIPreflightUsesModelListingAndKeepsBackendName(t *testing.T) {
 	model := core.ModelConfig{Provider: "openai", BaseURL: "http://fake.invalid/v1", Model: "served/model", APIKeyEnv: "VLLM_API_KEY"}
 	doer := &sglangPreflightDoer{t: t, wantURL: "http://fake.invalid/v1/models", body: `{"data":[{"id":"served/model"}]}`}

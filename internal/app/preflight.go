@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hyscale-lab/aries/pkg/core"
@@ -328,7 +329,7 @@ func validateGeminiModel(ctx context.Context, model core.ModelConfig, key []byte
 		if response != nil && response.Body != nil {
 			_ = response.Body.Close()
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || requestCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 			return liveValidationFailure(model, liveValidationCanceled, 1)
 		}
 		return liveValidationFailure(model, liveValidationTransport, 1)
@@ -383,7 +384,10 @@ func validateGeminiModel(ctx context.Context, model core.ModelConfig, key []byte
 }
 
 func geminiModelListed(listed, configured string) bool {
-	return listed == configured || listed == "models/"+configured || configured == "models/"+listed
+	if strings.HasPrefix(configured, "models/") {
+		return false
+	}
+	return listed == configured || listed == "models/"+configured
 }
 
 func isOfficialGemini(model core.ModelConfig) bool {
